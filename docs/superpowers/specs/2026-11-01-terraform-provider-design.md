@@ -36,9 +36,80 @@ key, private instance, and a separately managed empty volume attached at launch.
 It requires no public IP or gateway. A separate public-interface example can show
 public connectivity using the compute API's existing launch options.
 
-The provider manages customer APIs only. IAM provisioning, object storage, DNS,
-other products, standalone attachments, and stop/start/resize orchestration are
+The first release also manages IAM identities and access as described below.
+The provider manages customer APIs only. Object storage, DNS, other products,
+standalone infrastructure attachments, and stop/start/resize orchestration are
 later additions. No new service endpoint or production deployment is implied.
+
+### IAM identities and access
+
+The owner added IAM identities, including bots, to the first release on 2026-11-01.
+The proposed IAM surface is:
+
+| Resource | Ownership |
+| --- | --- |
+| `ezghcloud_bot` | Bot identity and mutable name |
+| `ezghcloud_group` | Locally managed group name and description |
+| `ezghcloud_policy` | Customer policy name, description and statement document |
+| `ezghcloud_group_membership` | One user or bot membership in a group |
+| `ezghcloud_policy_attachment` | One policy attached to a supported principal |
+| `ezghcloud_bot_trust` | Complete SSO trust collection for one bot |
+| `ezghcloud_oidc_provider` | Organization federation provider configuration |
+| `ezghcloud_bot_oidc_trust` | One OIDC trust entry for a bot |
+| `ezghcloud_api_key` | Created API key, its owner, expiry and revocation |
+| `ezghcloud_invitation` | An invitation sent to an email address |
+
+Provide read-only singular user, bot, group, policy, and OIDC provider data sources.
+Users are existing platform identities: org-api lists, reads, and removes organization
+users but has no user-creation endpoint. Terraform invites people rather than creating
+accounts or accepting invitations on their behalf. Organization user removal and
+reactivation are not disguised as CRUD on an account resource. SSO and SCIM managed
+identities remain managed by their source directory; surface API refusals clearly.
+
+Membership and policy attachment resources manage a single relationship, never replace
+all memberships or all policies on the principal. Do not add competing aggregate
+resources in the first release. Policy attachments support users, bots, groups, and
+SSO users/groups where the API supports them. Their imports include principal type,
+principal identifier and policy ID as well as organization. Use an unambiguous escaped
+encoding for SSO resource names, which may contain slashes. Read through documented
+principal/relationship APIs; if there is no direct GET, paginate the authoritative list.
+
+Managed platform policies are lookup-only. Custom policy documents use structured
+statement fields (effect, actions, resources, optional sid), deterministic normalization,
+and API validation. Names follow the platform's `Access` suffix convention. Keys and
+bots act with their owner's policies; do not invent per-key policies or roles.
+Do not cache authorization checks in the provider.
+
+Bot SSO trust uses the authoritative GET/PUT collection endpoint, exclusively owned by
+one resource per bot. OIDC trust entries use their returned IDs and list-based refresh;
+changing immutable provider, subject or claim constraints replaces an entry. Never
+manage temporary OIDC-exchanged credentials as persistent infrastructure. The provider
+may accept an externally obtained short-lived credential as its own authentication.
+
+API key secrets appear only at creation. Store the returned value in a sensitive
+computed attribute, preserve it on refresh, and document that it is stored in Terraform
+state. Import recovers metadata, never the original secret. Refresh via the paginated
+key list because the live API has no per-key GET. Changes to ownership or expiry replace
+the key; do not renew or rotate implicitly. A replay may omit the one-time secret: retain
+the key ID and return an actionable diagnostic rather than creating another key or
+claiming a secret was recovered. Never create credentials for a different user silently.
+The live API's botId schema currently describes UUIDs; resolve the supported wire format
+against the deployed handler before implementation, without changing the public schema
+or assuming all reference fields accept the same identifier representation.
+
+Invitation creation sends an email as a consequence of applying configuration. State
+records its ID, email, expiry and server status. Acceptance is a terminal successful
+handoff to the person, not drift requiring another invitation. Never resend automatically
+on expiry or acceptance. Revoking or destroying an accepted invitation must not remove
+the resulting organization member. Verify the API's terminal invitation visibility
+before selecting its precise refresh behavior; document and test that behavior.
+
+Add an IAM example that creates a bot and group, a narrowly scoped custom policy, a
+membership and policy attachment, and configures OIDC federation for short-lived bot
+credentials. A separate optional example creates a long-lived key with explicit expiry
+and a sensitive output. Acceptance tests cover relationship isolation, import, one-time
+secrets, revoked keys, and invitation terminal states. An invitation fixture exercises
+email behavior without sending messages to real people during default CI.
 
 ## Approaches
 
@@ -213,6 +284,7 @@ confirm the license choice during design approval before adding a license file.
 | --- | --- |
 | First scope: project, VPC, subnet, firewall, SSH key, instance, volume; import and lookups | Owner accepted initial proposal |
 | Public repository under ezgamehost | Owner, 2026-11-01 |
+| Include IAM identities, bots and access management in the first release | Owner, 2026-11-01 |
 | Go and Terraform Plugin Framework | Accepted initial proposal |
 | Remaining details in this document | Proposed implementation defaults |
 

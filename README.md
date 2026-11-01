@@ -6,7 +6,9 @@ This repository is in the design stage. There is no released provider or Terrafo
 Registry installation available yet.
 
 The proposed first release covers projects, VPCs, subnets, firewalls, SSH keys,
-instances, and volumes, with import and lookup data sources.
+instances, and volumes, plus IAM bots, groups, policies, memberships, policy
+attachments, API keys, invitations, and federation configuration, with import and
+lookup data sources where supported.
 
 See the [provider design](docs/superpowers/specs/2026-11-01-terraform-provider-design.md).
 
