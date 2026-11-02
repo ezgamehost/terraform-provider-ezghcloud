@@ -2,25 +2,57 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to tag and release, for example 0.1.0'
+        required: true
+        type: string
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
 permissions:
   contents: write
 jobs:
+  verify:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
   release:
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Verify
+      - name: Validate release and tag
+        id: version
+        env:
+          RELEASE_REF: ${{ inputs.version || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          go vet ./...
-          go test -race ./...
+          version="${RELEASE_REF#v}"
+          bash scripts/release.sh "$version" --validate-version
+          git merge-base --is-ancestor HEAD origin/main
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            test "$GITHUB_REF" = refs/heads/main
+            if git show-ref --verify --quiet "refs/tags/v$version"; then
+              echo 'Version tag already exists; choose a new version' >&2
+              exit 1
+            fi
+            git tag "v$version"
+            git push origin "refs/tags/v$version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Build, sign and publish
         env:
           GH_TOKEN: ${{ github.token }}
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           GPG_KEY_ID: ${{ vars.GPG_KEY_ID }}
-        run: bash scripts/release.sh "${GITHUB_REF_NAME#v}"
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/release.sh "$RELEASE_VERSION"

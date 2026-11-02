@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -20,8 +21,14 @@ jobs:
           terraform_version: '1.17.1'
           terraform_wrapper: false
       - name: Format
-        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+        run: |
+          mapfile -d '' -t go_files < <(git ls-files -z '*.go')
+          test -z "$(gofmt -l "${go_files[@]}")"
       - run: go vet ./...
+      - name: Release script validation
+        run: |
+          bash -n scripts/release.sh
+          bash scripts/test-release.sh
       - name: Unit and Terraform lifecycle tests
         env:
           TF_ACC: '1'

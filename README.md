@@ -83,11 +83,17 @@ against EZGH Cloud has not been run. Do not point fixture tests at a live endpoi
 
 ## Releases
 
-The release workflow builds Linux, macOS and Windows binaries for amd64 and arm64,
-creates checksums and signs them for Terraform Registry distribution. Before tagging
-a release, configure GitHub secrets `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`, repository
-variable `GPG_KEY_ID`, and register the matching public key and provider in the
-Terraform Registry. Published versions are immutable. No signing material is stored
-in the repository.
+Push a `vMAJOR.MINOR.PATCH` tag or manually run the Release workflow with a version.
+The workflow runs the full CI suite, builds Linux, macOS and Windows binaries for
+amd64 and arm64, verifies signed checksums, and publishes a GitHub release. Manual
+runs create the version tag from main after verification. Published versions are
+immutable; prereleases do not replace the latest stable version.
+
+Repository signing secrets are configured. The public key is in
+[keys/release-signing.asc](keys/release-signing.asc). Terraform Registry onboarding
+requires adding that key and registering the provider once; subsequent GitHub
+releases are picked up by the Registry webhook. See [releasing](docs/releasing.md)
+for release commands, verification, and onboarding. Private signing material is
+kept outside the repository.
 
 Licensed under [MPL-2.0](LICENSE).
