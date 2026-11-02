@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
@@ -120,6 +121,7 @@ func TestAccIAMLifecycle(t *testing.T) {
 		{ResourceName: "ezghcloud_policy.test", ImportState: true, ImportStateId: "org_test/policies-id", ImportStateVerify: true},
 		{ResourceName: "ezghcloud_group_membership.test", ImportState: true, ImportStateId: "org_test/bot/bots-id/groups-id", ImportStateVerify: true},
 		{ResourceName: "ezghcloud_policy_attachment.test", ImportState: true, ImportStateId: "org_test/group/groups-id/policies-id", ImportStateVerify: true},
+		{PreConfig: func() { mu.Lock(); defer mu.Unlock(); delete(entities, "groups") }, Config: config("deployer"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("ezghcloud_group.test", plancheck.ResourceActionCreate), plancheck.ExpectResourceAction("ezghcloud_group_membership.test", plancheck.ResourceActionCreate), plancheck.ExpectResourceAction("ezghcloud_policy_attachment.test", plancheck.ResourceActionCreate)}}},
 		{Config: config("renamed"), Check: resource.TestCheckResourceAttr("ezghcloud_bot.test", "name", "renamed")},
 	}, CheckDestroy: func(_ *terraform.State) error {
 		mu.Lock()
@@ -178,5 +180,75 @@ func TestAccAPIKeySecretSurvivesRefresh(t *testing.T) {
 			return fmt.Errorf("API key not revoked")
 		}
 		return nil
+	}})
+}
+
+func TestAccOIDCKeySourceTransitions(t *testing.T) {
+	mu := sync.Mutex{}
+	var current map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"version1"`)
+		switch r.Method {
+		case "POST":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			current = map[string]any{"id": "provider-id", "name": body["name"], "issuer": body["issuer"], "audiences": body["audiences"], "resourceName": "ezgh:test:oip_provider", "keySource": "discovery"}
+			if body["jwks"] != nil {
+				current["keySource"] = "jwks"
+			}
+			_ = json.NewEncoder(w).Encode(current)
+		case "GET":
+			if current == nil {
+				w.WriteHeader(404)
+				_, _ = w.Write([]byte(`{"error":{"code":"not_found"}}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(current)
+		case "PATCH":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if current["keySource"] != "jwks" && body["jwks"] != nil {
+				w.WriteHeader(400)
+				_, _ = w.Write([]byte(`{"error":{"code":"invalid_request"}}`))
+				return
+			}
+			for k, v := range body {
+				current[k] = v
+			}
+			_ = json.NewEncoder(w).Encode(current)
+		case "DELETE":
+			current = nil
+			w.WriteHeader(204)
+		}
+	}))
+	defer server.Close()
+	config := func(key string) string {
+		jwks := ""
+		if key != "" {
+			jwks = fmt.Sprintf(`jwks_json=jsonencode({keys=[{kty="RSA",kid=%q,n="test",e="AQAB"}]})`, key)
+		}
+		return fmt.Sprintf(`provider "ezghcloud" {
+ api_token="test"
+ organization_id="org_test"
+ endpoints={orgs=%q}
+ }
+ resource "ezghcloud_oidc_provider" "test" {
+ name="CI"
+ issuer="https://issuer.example.com"
+ audiences=["ezghcloud"]
+ %s
+ }`, server.URL, jwks)
+	}
+	checkAction := func(action plancheck.ResourceActionType) resource.ConfigPlanChecks {
+		return resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("ezghcloud_oidc_provider.test", action)}}
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(provider.New("test")())}, Steps: []resource.TestStep{
+		{Config: config(""), Check: resource.TestCheckResourceAttr("ezghcloud_oidc_provider.test", "key_source", "discovery")},
+		{Config: config("one"), ConfigPlanChecks: checkAction(plancheck.ResourceActionReplace), Check: resource.TestCheckResourceAttr("ezghcloud_oidc_provider.test", "key_source", "jwks")},
+		{Config: config("two"), ConfigPlanChecks: checkAction(plancheck.ResourceActionUpdate)},
+		{Config: config(""), ConfigPlanChecks: checkAction(plancheck.ResourceActionReplace), Check: resource.TestCheckResourceAttr("ezghcloud_oidc_provider.test", "key_source", "discovery")},
 	}})
 }

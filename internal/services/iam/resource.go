@@ -108,6 +108,15 @@ func (r *iamResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 	resp.Diagnostics.Append(resp.State.Set(ctx, objectValue(r.definition, v))...)
 }
 func (r *iamResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	prior, priorErr := readRaw(ctx, r.definition, req.State.Raw)
+	if priorErr != nil {
+		resp.Diagnostics.AddError("Invalid state", priorErr.Error())
+		return
+	}
+	if stringValue(prior, "organization_id") != r.client.OrganizationID {
+		resp.Diagnostics.AddError("Organization mismatch", "Resource belongs to another organization; configure an aliased provider for that organization.")
+		return
+	}
 	v, e := readRaw(ctx, r.definition, req.Plan.Raw)
 	if e != nil {
 		resp.Diagnostics.AddError("Invalid plan", e.Error())
@@ -128,6 +137,10 @@ func (r *iamResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	v, e := readRaw(ctx, r.definition, req.State.Raw)
 	if e != nil {
 		resp.Diagnostics.AddError("Invalid state", e.Error())
+		return
+	}
+	if stringValue(v, "organization_id") != r.client.OrganizationID {
+		resp.Diagnostics.AddError("Organization mismatch", "Resource belongs to another organization; configure an aliased provider for that organization.")
 		return
 	}
 	if r.definition.kind == "relation" {

@@ -332,11 +332,21 @@ func changeRelation(ctx context.Context, c *client.Client, d definition, v map[s
 	if !strings.HasPrefix(stringValue(v, "principal_type"), "sso") {
 		headers, e = etag(ctx, c, parent)
 		if e != nil {
+			if method == http.MethodDelete {
+				if missing, checkErr := confirmedMissingParent(ctx, c, e); missing || checkErr != nil {
+					return v, checkErr
+				}
+			}
 			return v, e
 		}
 	}
 	_, e = c.DoWithHeaders(ctx, "orgs", method, p, nil, headers)
 	if e != nil {
+		if method == http.MethodDelete {
+			if missing, checkErr := confirmedMissingParent(ctx, c, e); missing || checkErr != nil {
+				return v, checkErr
+			}
+		}
 		return v, e
 	}
 	v["organization_id"] = types.StringValue(c.OrganizationID)
@@ -359,6 +369,9 @@ func readRelation(ctx context.Context, c *client.Client, d definition, v map[str
 	}
 	r, e := c.Do(ctx, "orgs", http.MethodGet, parent, nil)
 	if e != nil {
+		if missing, checkErr := confirmedMissingParent(ctx, c, e); missing || checkErr != nil {
+			return false, checkErr
+		}
 		return false, e
 	}
 	body, e := decodeBody(r)
@@ -388,4 +401,18 @@ func readRelation(ctx context.Context, c *client.Client, d definition, v map[str
 		}
 	}
 	return false, nil
+}
+
+// A missing relationship parent proves the relationship cannot exist only when
+// the caller can still see its organization. Hidden organizations remain errors.
+func confirmedMissingParent(ctx context.Context, c *client.Client, err error) (bool, error) {
+	var apiErr *client.Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return false, nil
+	}
+	_, visibilityErr := c.Do(ctx, "orgs", http.MethodGet, "/v1/organizations/"+url.PathEscape(c.OrganizationID), nil)
+	if visibilityErr != nil {
+		return false, visibilityErr
+	}
+	return true, nil
 }

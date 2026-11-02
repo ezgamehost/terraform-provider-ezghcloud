@@ -9,7 +9,7 @@ the slug is not substituted for a UUID-only request field.
 | bot | name | organization | org/id |
 | group | name, description | organization | org/id |
 | policy | name, description, statements | organization | org/id |
-| oidc_provider | name, audiences, jwks_json | issuer, organization | org/id |
+| oidc_provider | name, audiences, uploaded JWKS rotation | issuer, organization, discovery/uploaded key source transitions | org/id |
 | api_key | none | name, bot_id, expires_in_seconds | org/id |
 | invitation | none | email, group_ids, policy_ids, expires_in_days | org/id |
 | bot_trust | trust | bot_id | org/bot_id |
@@ -33,6 +33,12 @@ Key refresh requires `apiKeys.list` so absence is not confused with an owner-fil
 response. Tokens are sensitive computed state values, returned once and preserved
 on refresh. Imports cannot recover the token. Expiry/name/owner changes replace a key;
 there is no implicit rotation.
+
+When a relationship's parent is missing, refresh confirms the organization remains
+visible before removing the relationship from state. Destroy treats that confirmed
+absence as success. If the organization is hidden, refresh and destroy return an
+error. Update and delete validate the persisted organization before any HTTP request,
+including when Terraform refresh is disabled.
 
 Invitations create a pending invitation and shareable login URL. The platform does
 not send email. Accepted, declined, expired and revoked invitations remain visible

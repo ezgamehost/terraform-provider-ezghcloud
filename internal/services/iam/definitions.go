@@ -1,7 +1,9 @@
 package iam
 
 import (
+	"context"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
@@ -74,6 +76,10 @@ func definitions() map[string]definition {
 	provider := ds["oidc_provider"]
 	jwks := str("jwks", false, false, false)
 	jwks.preserve = true
+	jwksAttribute := jwks.attribute.(schema.StringAttribute)
+	jwksAttribute.Description = "Public JWKS JSON. Switching between discovery and uploaded keys replaces the provider; rotating uploaded keys updates it in place."
+	jwksAttribute.PlanModifiers = []planmodifier.String{stringplanmodifier.RequiresReplaceIf(jwksSourceChange, "Changing the OIDC key source requires replacement.", "Changing the OIDC key source requires replacement.")}
+	jwks.attribute = jwksAttribute
 	provider.fields["jwks_json"] = jwks
 	provider.fields["key_source"] = str("keySource", false, true, false)
 	ds["oidc_provider"] = provider
@@ -102,6 +108,19 @@ func definitions() map[string]definition {
 		ds[name] = d
 	}
 	return ds
+}
+
+func jwksSourceChange(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+	if req.PlanValue.IsUnknown() {
+		return
+	}
+	wasUploaded := !req.StateValue.IsNull()
+	var source types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("key_source"), &source)...)
+	if !source.IsNull() && !source.IsUnknown() {
+		wasUploaded = source.ValueString() == "jwks"
+	}
+	resp.RequiresReplace = wasUploaded != !req.PlanValue.IsNull()
 }
 func attributeTypes(d definition) map[string]attr.Type {
 	out := map[string]attr.Type{}
