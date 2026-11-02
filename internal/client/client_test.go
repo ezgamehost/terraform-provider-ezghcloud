@@ -127,3 +127,41 @@ func TestListReadsNamedAPICollections(t *testing.T) {
 		t.Fatalf("%v %v", rows, err)
 	}
 }
+
+func TestLongRetryAfterReturnsWithoutUnboundedWait(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(429)
+	}))
+	defer s.Close()
+	c := New(Config{Endpoints: map[string]string{"orgs": s.URL}})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := c.Do(ctx, "orgs", "GET", "/bots", nil)
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 429 {
+		t.Fatalf("expected rate limit, got %v", err)
+	}
+}
+
+func TestListRejectsMissingPaginationMetadata(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"items":[]}`)) }))
+	defer s.Close()
+	c := New(Config{Endpoints: map[string]string{"orgs": s.URL}})
+	if _, err := c.List(context.Background(), "orgs", "/bots"); err == nil {
+		t.Fatal("missing cursor could truncate an authoritative list")
+	}
+}
+
+func TestAccessDeniedNamesRequiredPermissionWithoutEchoingMessage(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"error":{"code":"access_denied","message":"Not allowed to bots.create; secret-token"}}`))
+	}))
+	defer s.Close()
+	c := New(Config{Endpoints: map[string]string{"orgs": s.URL}})
+	_, err := c.Do(context.Background(), "orgs", "GET", "/bots", nil)
+	if err == nil || !strings.Contains(err.Error(), "bots.create") || strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("%v", err)
+	}
+}

@@ -1,6 +1,6 @@
 # EZGH Cloud Terraform provider
 
-Status: proposed for implementation review, 2026-11-01.
+Status: implementation approved by the owner ("build it"), 2026-11-01.
 
 ## Intent
 
@@ -97,7 +97,7 @@ The live API's botId schema currently describes UUIDs; resolve the supported wir
 against the deployed handler before implementation, without changing the public schema
 or assuming all reference fields accept the same identifier representation.
 
-Invitation creation sends an email as a consequence of applying configuration. State
+Invitation creation makes an invitation available to the invitee in EZGH Cloud. State
 records its ID, email, expiry and server status. Acceptance is a terminal successful
 handoff to the person, not drift requiring another invitation. Never resend automatically
 on expiry or acceptance. Revoking or destroying an accepted invitation must not remove
@@ -109,7 +109,7 @@ membership and policy attachment, and configures OIDC federation for short-lived
 credentials. A separate optional example creates a long-lived key with explicit expiry
 and a sensitive output. Acceptance tests cover relationship isolation, import, one-time
 secrets, revoked keys, and invitation terminal states. An invitation fixture exercises
-email behavior without sending messages to real people during default CI.
+invitation behavior without contacting real people during default CI.
 
 ## Approaches
 

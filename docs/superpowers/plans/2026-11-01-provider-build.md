@@ -1,6 +1,6 @@
 # EZGH Cloud Provider Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement the approved infrastructure and IAM provider with import, lookups, examples and executable lifecycle verification.
 
@@ -34,38 +34,40 @@
 
 ### Task 1: Shared provider and transport
 
-- [ ] Write client tests for stable POST retry keys, denied redirects, paginated lists, safe errors and deadline cancellation; observe failures.
-- [ ] Implement the shared interface, provider configuration, binary entry point and client tests.
-- [ ] Verify `go test -race ./internal/client/...`, then commit.
+- [x] Write client tests for stable POST retry keys, denied redirects, paginated lists, safe errors and deadline cancellation; observe failures.
+- [x] Implement the shared interface, provider configuration, binary entry point and client tests.
+- [x] Verify `go test -race ./internal/client/...`, then commit.
 
 ### Task 2: IAM
 
-- [ ] Inspect served IAM schemas and handlers; record lifecycle choices in package documentation.
-- [ ] Write failing tests for bot/group/policy CRUD, relationship isolation, import and sensitive key refresh.
-- [ ] Implement explicit resources and corresponding lookups, federation, invitations and examples.
-- [ ] Run package tests and framework schema validation; commit owned paths.
+- [x] Inspect served IAM schemas and handlers; record lifecycle choices in package documentation.
+- [x] Write failing tests for bot/group/policy CRUD, relationship isolation, import and sensitive key refresh.
+- [x] Implement explicit resources and corresponding lookups, federation, invitations and examples.
+- [x] Run package tests and framework schema validation; commit owned paths.
 
 ### Task 3: Networking
 
-- [ ] Inspect VPC, subnet and firewall schemas; record field lifecycle matrix.
-- [ ] Write failing API lifecycle/import tests, including CIDR replacement and firewall rules ownership.
-- [ ] Implement VPC, subnet and firewall resources and singular lookups, with examples.
-- [ ] Run package tests and schema validation; commit owned paths.
+- [x] Inspect VPC, subnet and firewall schemas; record field lifecycle matrix.
+- [x] Write failing API lifecycle/import tests, including CIDR replacement and firewall rules ownership.
+- [x] Implement VPC, subnet and firewall resources and singular lookups, with examples.
+- [x] Run package tests and schema validation; commit owned paths.
 
 ### Task 4: Compute and storage
 
-- [ ] Inspect compute, SSH key, volume and image APIs; record lifecycle matrix.
-- [ ] Write failing tests for operation timeouts retaining IDs, image resolution, import and exact sizes.
-- [ ] Implement instance, SSH key and volume resources, catalog/image/resource lookups and examples.
-- [ ] Run package tests and schema validation; commit owned paths.
+- [x] Inspect compute, SSH key, volume and image APIs; record lifecycle matrix.
+- [x] Write failing tests for operation timeouts retaining IDs, image resolution, import and exact sizes.
+- [x] Implement instance, SSH key and volume resources, catalog/image/resource lookups and examples.
+- [x] Run package tests and schema validation; commit owned paths.
 
 ### Task 5: Integration and distribution
 
-- [ ] Register every package and run real Terraform/OpenTofu protocol schema and lifecycle checks against API fixtures.
-- [ ] Add generated docs, deployment/IAM examples, MPL-2.0, Linux CI and cross-platform release configuration.
-- [ ] Run formatting, vet, race tests, builds, schema/documentation checks and examples validation.
-- [ ] Review the final repository for defects, fix concrete findings, commit and push; report any unverified live behavior or Registry setup.
+- [x] Register every package and run real Terraform/OpenTofu protocol schema and lifecycle checks against API fixtures.
+- [x] Add generated docs, deployment/IAM examples, MPL-2.0, Linux CI and cross-platform release configuration.
+- [x] Run formatting, vet, race tests, builds, schema/documentation checks and examples validation.
+- [x] Review the final repository for defects, fix concrete findings, commit and push; report any unverified live behavior or Registry setup.
 
 ## Execution record
 
 Owner's “build it” authorizes execution. Teams follow workspace path ownership rather than per-task review gates. Opus is not available in this harness; reviews use available agents without claiming an Opus review.
+
+Final verification: Terraform 1.17.1 fixture acceptance and race tests pass for all packages; vet, formatting, generated docs, example validation, and six cross-platform builds pass. Final defect review findings were fixed with regression tests. Live EZGH Cloud resource acceptance and Registry publication remain unverified; signing configuration is required before publishing.

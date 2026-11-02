@@ -6,5 +6,6 @@
 *.tfvars.json
 crash.log
 dist/
+bin/
 coverage.out
 terraform-provider-ezghcloud

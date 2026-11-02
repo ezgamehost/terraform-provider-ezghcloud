@@ -1,0 +1,13 @@
+.PHONY: build test acceptance docs check
+build:
+	go build -o bin/terraform-provider-ezghcloud .
+test:
+	go test -race ./...
+acceptance:
+	TF_ACC=1 go test -race -timeout 7m ./...
+docs:
+	go tool tfplugindocs generate --provider-name ezghcloud
+check:
+	test -z "$$(gofmt -l $$(git ls-files '*.go'))"
+	go vet ./...
+	go test -race ./...

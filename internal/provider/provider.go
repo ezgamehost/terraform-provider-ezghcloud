@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/compute"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/iam"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/network"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	framework "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -82,5 +85,15 @@ func (p *cloudProvider) Configure(ctx context.Context, req framework.ConfigureRe
 	resp.ResourceData = c
 	resp.DataSourceData = c
 }
-func (p *cloudProvider) Resources(context.Context) []func() resource.Resource       { return nil }
-func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSource { return nil }
+func (p *cloudProvider) Resources(context.Context) []func() resource.Resource {
+	out := []func() resource.Resource{func() resource.Resource { return &projectResource{} }}
+	out = append(out, iam.Resources()...)
+	out = append(out, network.Resources()...)
+	return append(out, compute.Resources()...)
+}
+func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSource {
+	out := []func() datasource.DataSource{func() datasource.DataSource { return &projectDataSource{} }}
+	out = append(out, iam.DataSources()...)
+	out = append(out, network.DataSources()...)
+	return append(out, compute.DataSources()...)
+}

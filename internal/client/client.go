@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -50,11 +51,18 @@ func (r *Response) Decode(target any) error {
 type Error struct {
 	StatusCode               int
 	Code, Message, RequestID string
+	Permission               string
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("EZGH Cloud API: HTTP %d (%s), request ID %s", e.StatusCode, e.Code, e.RequestID)
+	message := fmt.Sprintf("EZGH Cloud API: HTTP %d (%s), request ID %s", e.StatusCode, e.Code, e.RequestID)
+	if e.Permission != "" {
+		message += "; required permission " + e.Permission
+	}
+	return message
 }
+
+var permissionMessage = regexp.MustCompile(`(?:allowed to |permission[: ]+)([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)+)`)
 
 func New(cfg Config) *Client {
 	endpoints := make(map[string]string, len(DefaultEndpoints))
@@ -162,12 +170,20 @@ func (c *Client) DoWithHeaders(ctx context.Context, service, method, path string
 		if json.Unmarshal(data, &envelope) == nil && envelope.Error.Code != "" {
 			apiErr.Code = envelope.Error.Code
 			apiErr.Message = envelope.Error.Message
+			if apiErr.Code == "access_denied" {
+				if match := permissionMessage.FindStringSubmatch(apiErr.Message); len(match) == 2 {
+					apiErr.Permission = match[1]
+				}
+			}
 		}
 		safe := method == http.MethodGet || method == http.MethodHead || method == http.MethodPost
 		if !safe || attempt == 3 || (raw.StatusCode != 429 && raw.StatusCode != 503) || apiErr.Code == "quota_exceeded" {
 			return nil, apiErr
 		}
 		delay := retryDelay(raw.Header, time.Duration(attempt+1)*time.Second)
+		if delay > time.Minute {
+			return nil, apiErr
+		}
 		if err := sleep(ctx, delay); err != nil {
 			return nil, err
 		}
@@ -215,6 +231,13 @@ func (c *Client) List(ctx context.Context, service, path string) ([]map[string]a
 		}
 		if err = resp.Decode(&page); err != nil {
 			return nil, err
+		}
+		var metadata map[string]json.RawMessage
+		if err = resp.Decode(&metadata); err != nil {
+			return nil, err
+		}
+		if _, ok := metadata["nextCursor"]; !ok {
+			return nil, errors.New("API list response omitted nextCursor")
 		}
 		if page.Items == nil {
 			var envelope map[string]json.RawMessage
