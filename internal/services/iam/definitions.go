@@ -77,7 +77,7 @@ func definitions() map[string]definition {
 	jwks := str("jwks", false, false, false)
 	jwks.preserve = true
 	jwksAttribute := jwks.attribute.(schema.StringAttribute)
-	jwksAttribute.Description = "Public JWKS JSON. Switching between discovery and uploaded keys replaces the provider; rotating uploaded keys updates it in place."
+	jwksAttribute.Description = "Null or omitted uses issuer discovery; a public JWKS JSON object uploads keys. Switching between discovery and uploaded keys replaces the provider; rotating uploaded key contents updates it in place."
 	jwksAttribute.PlanModifiers = []planmodifier.String{stringplanmodifier.RequiresReplaceIf(jwksSourceChange, "Changing the OIDC key source requires replacement.", "Changing the OIDC key source requires replacement.")}
 	jwks.attribute = jwksAttribute
 	provider.fields["jwks_json"] = jwks
