@@ -44,7 +44,7 @@ func (d *lookup) Schema(_ context.Context, _ datasource.SchemaRequest, resp *dat
 	case "firewall":
 		a["etag"] = schema.StringAttribute{Computed: true, Description: "Strong firewall version."}
 		fields := map[string]schema.Attribute{}
-		for _, n := range []string{"direction", "protocol", "peer_cidr", "peer_firewall_id", "description"} {
+		for _, n := range []string{"direction", "protocol", "peer_cidr", "peer_firewall_id", "peer_database_id", "description"} {
 			fields[n] = schema.StringAttribute{Computed: true, Description: "Firewall rule " + n + "."}
 		}
 		for _, n := range []string{"ports_from", "ports_to", "icmp_type", "icmp_code"} {

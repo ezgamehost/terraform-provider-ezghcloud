@@ -41,6 +41,7 @@ Read-Only:
 - `icmp_code` (Number) Firewall rule icmp_code.
 - `icmp_type` (Number) Firewall rule icmp_type.
 - `peer_cidr` (String) Firewall rule peer_cidr.
+- `peer_database_id` (String) Firewall rule peer_database_id.
 - `peer_firewall_id` (String) Firewall rule peer_firewall_id.
 - `ports_from` (Number) Firewall rule ports_from.
 - `ports_to` (Number) Firewall rule ports_to.

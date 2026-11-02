@@ -48,6 +48,7 @@ Optional:
 - `icmp_code` (Number) ICMP code (0–255); omit for every code of the selected type.
 - `icmp_type` (Number) ICMP type (0–255); omit for every type.
 - `peer_cidr` (String) Canonical IPv4 or IPv6 peer prefix. Exactly one peer selector is required.
+- `peer_database_id` (String) Peer database ID (dbi_) in this project: traffic to and from it. Exactly one peer selector is required.
 - `peer_firewall_id` (String) Peer firewall ID. Exactly one peer selector is required.
 - `ports_from` (Number) First TCP/UDP port (1–65535); omit both port fields for all ports.
 - `ports_to` (Number) Last TCP/UDP port (1–65535).

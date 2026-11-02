@@ -6,7 +6,7 @@ This provider is under development. Build it locally using the instructions belo
 there is no published Terraform Registry release yet.
 
 The provider covers projects, VPCs, subnets, firewalls, SSH keys,
-instances, and volumes, plus IAM bots, groups, policies, memberships, policy
+instances, volumes, and databases with their backups, plus IAM bots, groups, policies, memberships, policy
 attachments, API keys, invitations, and federation configuration, with import and
 lookup data sources where supported.
 
@@ -39,7 +39,7 @@ Set `TF_CLI_CONFIG_FILE` to that file. With a development override, run `terrafo
 validate`, `plan`, and `apply` directly; `terraform init` still tries to install a
 published provider. See [provider configuration](docs/index.md),
 [infrastructure examples](examples/compute), [network examples](examples/network),
-and [IAM examples](examples/iam).
+[database examples](examples/databases) and [IAM examples](examples/iam).
 
 ```sh
 export EZGHCLOUD_API_TOKEN='your-bearer-credential'

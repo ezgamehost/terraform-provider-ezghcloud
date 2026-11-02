@@ -270,3 +270,23 @@ func TestFirewallOwnsEmptyRulesAndUsesConditionalReplacement(t *testing.T) {
 		t.Fatal("concurrent rules were overwritten")
 	}
 }
+
+func TestRuleDatabasePeer(t *testing.T) {
+	rule := ruleModel{Direction: types.StringValue("inbound"), Protocol: types.StringValue("tcp"), PeerDatabaseID: types.StringValue("dbi_4k2m9x0a7qpe"), PortsFrom: types.Int64Value(5432), PortsTo: types.Int64Value(5432)}
+	wire, err := encodeRules([]ruleModel{rule})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(wire[0].Peer)
+	if string(raw) != `{"database":"dbi_4k2m9x0a7qpe"}` {
+		t.Fatalf("peer = %s", raw)
+	}
+	decoded := decodeRules(wire)
+	if decoded[0].PeerDatabaseID.ValueString() != "dbi_4k2m9x0a7qpe" || !decoded[0].PeerCIDR.IsNull() || !decoded[0].PeerFirewallID.IsNull() {
+		t.Fatalf("%+v", decoded[0])
+	}
+	rule.PeerFirewallID = types.StringValue("fwl_abcdefghijkl")
+	if _, err := encodeRules([]ruleModel{rule}); err == nil {
+		t.Fatal("accepted a database and a firewall peer together")
+	}
+}
