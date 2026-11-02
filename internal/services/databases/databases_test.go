@@ -160,8 +160,14 @@ func TestDatabaseRestoreSourceSetOnce(t *testing.T) {
 	state, plan := available(ctx), available(ctx)
 	state.SourceBackupID = types.StringValue("dbb_123456789abc")
 	resp := modifyPlan(t, state, plan)
-	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 1 || len(resp.RequiresReplace) != 0 {
-		t.Fatalf("source removal: %v, replace %v", resp.Diagnostics, resp.RequiresReplace)
+	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 1 {
+		t.Fatalf("source removal: %v", resp.Diagnostics)
+	}
+	// Beside a replacement the warning would be wrong: the new database is restored from the new source.
+	replaced := plan
+	replaced.SubnetID = types.StringValue("sbn_999999999999")
+	if resp := modifyPlan(t, state, replaced); resp.Diagnostics.WarningsCount() != 0 {
+		t.Fatalf("warned beside a replacement: %v", resp.Diagnostics)
 	}
 	// A source change isn't a replacement, so the version check still holds.
 	plan.EngineVersion = types.StringValue("17")

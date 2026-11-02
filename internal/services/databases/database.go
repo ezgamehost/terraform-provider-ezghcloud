@@ -173,15 +173,16 @@ func (r *databaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	for _, pair := range [][2]attr.Value{{plan.ProjectID, state.ProjectID}, {plan.Engine, state.Engine}, {plan.SubnetID, state.SubnetID}, {plan.StorageVolumeType, state.StorageVolumeType}} {
+		if !pair[0].Equal(pair[1]) {
+			return // Being replaced: the new database takes any version and size.
+		}
+	}
+	// Not replaced, so a source change only reaches state.
 	for name, pair := range map[string][2]types.String{"source_backup_id": {plan.SourceBackupID, state.SourceBackupID}, "source_database_id": {plan.SourceDatabaseID, state.SourceDatabaseID}, "source_time": {plan.SourceTime, state.SourceTime}} {
 		if !pair[0].Equal(pair[1]) {
 			resp.Diagnostics.AddAttributeWarning(path.Root(name), name+" only applies at create",
 				"A restore source is used only when the database is created. This change is saved to state and does nothing to the database; to restore again, create a new database.")
-		}
-	}
-	for _, pair := range [][2]attr.Value{{plan.ProjectID, state.ProjectID}, {plan.Engine, state.Engine}, {plan.SubnetID, state.SubnetID}, {plan.StorageVolumeType, state.StorageVolumeType}} {
-		if !pair[0].Equal(pair[1]) {
-			return // Being replaced: the new database takes any version and size.
 		}
 	}
 	if known(plan.EngineVersion) && !plan.EngineVersion.Equal(state.EngineVersion) {
