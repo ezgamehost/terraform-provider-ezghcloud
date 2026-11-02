@@ -3,9 +3,11 @@ package databases
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -70,6 +72,10 @@ func (r *backupResource) Create(ctx context.Context, req resource.CreateRequest,
 	var m backupModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() || !validateOrg(m.OrganizationID, r.client, &resp.Diagnostics) {
+		return
+	}
+	if !strings.HasPrefix(m.DatabaseID.ValueString(), "dbi_") {
+		resp.Diagnostics.AddAttributeError(path.Root("database_id"), "Invalid database ID", "Use the database's dbi_ ID.")
 		return
 	}
 	ctx, cancel := timeoutContext(ctx, m.OperationTimeout, &resp.Diagnostics)

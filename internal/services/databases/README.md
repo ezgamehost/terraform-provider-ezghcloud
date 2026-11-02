@@ -11,16 +11,17 @@ resource in state.
 | Database `project_id`, `engine`, `subnet_id`, `storage_volume_type`, `source_*` | Replacement |
 | Database `engine_version` | Refused at plan: a replacement would destroy data. Major upgrades go through a blue/green deployment; after its switchover, set the new version |
 | Database `storage_size_gib` | Grows in place; shrinking is refused at plan |
+| Database `description` | `""` reads back as `""` (the API shows it as null) |
 | Database `name`, `description`, `tags`, `instance_type`, `storage_iops`, `storage_throughput_mbps`, `allowed_source_cidrs`, backup and maintenance windows, `backup_retention_days`, `parameters`, `log_exports`, `deletion_protection` | One `PATCH` in place, sending only what changed beyond the row fields |
-| Database `parameters` | The whole set. Only configured keys are read back, so a default the API adds isn't drift; import reads none |
+| Database `parameters` | Only configured keys are read back, so a default the API adds isn't drift; import reads none. The API takes the whole set, so an update sends the current set with the keys removed from config dropped and the configured ones laid over: keys Terraform never managed survive |
 | Database `deletion_protection` | Destroy is refused while true |
 | Database `final_backup_on_destroy` | Provider only, default `true`: destroy sends `finalBackup` |
 | Database `admin_secret_id` | The Secret holding the admin credentials. State never holds the password |
 | Backup `project_id`, `database_id` | Replacement (a new backup) |
 | Backup destroy | `DELETE` answers with the backup deleting; it has left the project's lists |
 
-`operation_timeout` defaults to `60m`. Refresh resumes a `creating` or `deleting` database (and a
-`creating` backup) through its saved operation. A `404` is read as gone only after the project read
+`operation_timeout` defaults to `60m`. Refresh resumes a `creating` database or backup through its saved operation; a `deleting` database
+stays in state until it's gone. A `404` is read as gone only after the project read
 succeeds. Import IDs are `organization_id/project_id/dbi_…` or `…/dbb_…`; `source_*`, `operation_id`
 and `parameters` can't be recovered on import.
 

@@ -75,6 +75,9 @@ func (f *fixture) serve(t *testing.T) func(http.ResponseWriter, *http.Request) {
 				merge(obj, k, v)
 			}
 			obj["subnet"] = body["subnet"]
+			if body["description"] == "" {
+				obj["description"] = nil
+			}
 			params, _ := obj["parameters"].(map[string]any)
 			if params == nil {
 				params = map[string]any{}
@@ -97,9 +100,8 @@ func (f *fixture) serve(t *testing.T) func(http.ResponseWriter, *http.Request) {
 			for k, v := range body {
 				merge(obj, k, v)
 			}
-			if p, ok := body["parameters"].(map[string]any); ok {
-				p["shared_buffers"] = "128MB"
-				obj["parameters"] = p
+			if body["description"] == "" {
+				obj["description"] = nil // the API shows an empty description as null
 			}
 			accepted("modify", last)
 		case f.objects[last] != nil && r.Method == "DELETE":
@@ -130,23 +132,28 @@ provider "ezghcloud" {
 
 func TestAccDatabaseLifecycle(t *testing.T) {
 	f := newFixture(t)
-	config := func(instanceType string, size int, version string) string {
+	config := func(instanceType string, size int, version string, workMem ...string) string {
+		mem := "8MB"
+		if len(workMem) > 0 {
+			mem = workMem[0]
+		}
 		return f.provider() + fmt.Sprintf(`
 resource "ezghcloud_database" "orders" {
  project_id = "prj_test"
  name = "orders"
+ description = ""
  engine = "postgresql"
  engine_version = %[3]q
  instance_type = %[1]q
  storage_size_gib = %[2]d
  subnet_id = "sbn_123456789abc"
- parameters = { work_mem = "8MB" }
+ parameters = { work_mem = %[4]q }
 }
 data "ezghcloud_database" "orders" {
  project_id = "prj_test"
  id = ezghcloud_database.orders.id
 }
-`, instanceType, size, version)
+`, instanceType, size, version, mem)
 	}
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories,
 		CheckDestroy: func(*terraform.State) error {
@@ -169,9 +176,13 @@ data "ezghcloud_database" "orders" {
 				resource.TestCheckResourceAttr("ezghcloud_database.orders", "instance_type", "gs-1.xlarge"),
 				resource.TestCheckResourceAttr("ezghcloud_database.orders", "storage_size_gib", "40"),
 				resource.TestCheckResourceAttr("ezghcloud_database.orders", "id", "dbi_123456789abc"))},
+			// A parameter Terraform never managed survives a change to one it does.
+			{Config: config("gs-1.xlarge", 40, "18", "16MB"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_database.orders", "parameters.work_mem", "16MB"),
+				resource.TestCheckResourceAttr("data.ezghcloud_database.orders", "parameters.shared_buffers", "128MB"))},
 			{Config: config("gs-1.xlarge", 40, "17"), ExpectError: regexp.MustCompile(`blue/green deployment`)},
 			{Config: config("gs-1.xlarge", 20, "18"), ExpectError: regexp.MustCompile(`Storage can't shrink`)},
-			{ResourceName: "ezghcloud_database.orders", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id", "parameters"}},
+			{ResourceName: "ezghcloud_database.orders", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id", "parameters", "description"}},
 		}})
 }
 

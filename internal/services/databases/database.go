@@ -66,7 +66,7 @@ type databaseView struct {
 	Description                                                                                     *string
 	Tags, Parameters                                                                                map[string]string
 	Storage                                                                                         struct {
-		VolumeType                     string
+		VolumeType                    string
 		SizeGiB, IOPS, ThroughputMBps int64
 	}
 	AllowedSourceCidrs, LogExports []string
@@ -158,6 +158,9 @@ func (r *databaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 		return
 	}
 	if req.State.Raw.IsNull() {
+		if plan.SourceBackupID.IsUnknown() || plan.SourceDatabaseID.IsUnknown() || plan.SourceTime.IsUnknown() {
+			return // checked again once known, at apply
+		}
 		b, d, t := plan.SourceBackupID.ValueString() != "", plan.SourceDatabaseID.ValueString() != "", plan.SourceTime.ValueString() != ""
 		if (b && (d || t)) || d != t {
 			resp.Diagnostics.AddError("Invalid restore source", "Set source_backup_id alone, or source_database_id with source_time.")
@@ -264,7 +267,8 @@ func (r *databaseResource) Read(ctx context.Context, req resource.ReadRequest, r
 	}
 	m.fromAPI(ctx, v, r.client.OrganizationID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
-	if v.Status != "creating" && v.Status != "deleting" {
+	// A deleting database stays in state until it's gone: Delete saves no operation to wait on.
+	if v.Status != "creating" {
 		return
 	}
 	if m.OperationID.ValueString() == "" {
@@ -328,9 +332,25 @@ func (r *databaseResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 	resp.Diagnostics.Append(setCollections(ctx, body, changed, false)...)
 	if !m.Parameters.Equal(old.Parameters) {
-		params := map[string]string{} // null sends {}: every parameter back to its default
+		// The API takes the whole set: keep keys Terraform never managed, drop the ones removed from config.
+		current, err := readDatabase(ctx, r.client, m.ProjectID.ValueString(), m.ID.ValueString())
+		if err != nil {
+			apiError(&resp.Diagnostics, err)
+			return
+		}
+		params := map[string]string{}
+		for k, v := range current.Parameters {
+			params[k] = v
+		}
+		for k := range old.Parameters.Elements() {
+			delete(params, k)
+		}
 		if known(m.Parameters) {
-			resp.Diagnostics.Append(m.Parameters.ElementsAs(ctx, &params, false)...)
+			planned := map[string]string{}
+			resp.Diagnostics.Append(m.Parameters.ElementsAs(ctx, &planned, false)...)
+			for k, v := range planned {
+				params[k] = v
+			}
 		}
 		body["parameters"] = params
 	}
@@ -447,8 +467,11 @@ func (f *databaseFields) fill(ctx context.Context, v databaseView, org string) {
 // fromAPI reads the database into the resource. parameters keeps the configured keys only, so a
 // default the API adds isn't drift; an import reads none of them.
 func (m *databaseModel) fromAPI(ctx context.Context, v databaseView, org string) {
-	configured := m.Parameters
+	configured, description := m.Parameters, m.Description
 	m.fill(ctx, v, org)
+	if description.ValueString() == "" && known(description) && v.Description == nil {
+		m.Description = description // the API shows an empty description as null
+	}
 	m.Parameters = types.MapNull(types.StringType)
 	if known(configured) {
 		keep := map[string]string{}

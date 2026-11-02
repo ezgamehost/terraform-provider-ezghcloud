@@ -135,6 +135,19 @@ func TestDatabaseRestoreSourceChecked(t *testing.T) {
 	}
 }
 
+func TestDatabaseUnknownRestoreSourceWaitsForApply(t *testing.T) {
+	ctx := context.Background()
+	r := &databaseResource{}
+	plan := planned(ctx)
+	plan.SourceDatabaseID, plan.SourceTime = types.StringValue("dbi_123456789abc"), types.StringUnknown()
+	p := asState(t, r, &plan)
+	resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: p.Schema, Raw: p.Raw}}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: tfsdk.State{Schema: p.Schema, Raw: tftypes.NewValue(p.Schema.Type().TerraformType(ctx), nil)}, Plan: tfsdk.Plan{Schema: p.Schema, Raw: p.Raw}}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+}
+
 func TestDatabaseStateHoldsNoPassword(t *testing.T) {
 	for name := range schemaOf(&databaseResource{}).Schema.Attributes {
 		if strings.Contains(name, "password") {

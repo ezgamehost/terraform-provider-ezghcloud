@@ -2,10 +2,12 @@ package databases
 
 import (
 	"context"
+	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -63,6 +65,13 @@ func (d *lookup) Configure(_ context.Context, req datasource.ConfigureRequest, r
 func (d *lookup) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	if d.client == nil {
 		resp.Diagnostics.AddError("Provider not configured", "Configure the EZGH Cloud provider.")
+		return
+	}
+	var id types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("id"), &id)...)
+	prefix := map[string]string{"database": "dbi_", "database_backup": "dbb_"}[d.kind]
+	if !strings.HasPrefix(id.ValueString(), prefix) || !prefixedID.MatchString(id.ValueString()) {
+		resp.Diagnostics.AddAttributeError(path.Root("id"), "Invalid ID", "Use the canonical "+prefix+" ID.")
 		return
 	}
 	if d.kind == "database_backup" {
