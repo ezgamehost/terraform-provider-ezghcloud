@@ -105,7 +105,8 @@ func (*databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		return schema.Int64Attribute{Optional: true, Computed: true, Description: d, PlanModifiers: keepInt}
 	}
 	source := func(d string) schema.StringAttribute {
-		return schema.StringAttribute{Optional: true, Description: d + " Changing it replaces the database.", PlanModifiers: replace}
+		// Set once: a later change or removal must never replace (destroy) a restored database.
+		return schema.StringAttribute{Optional: true, Description: d + " Only applies at create: a later change or removal is ignored."}
 	}
 	resp.Schema = schema.Schema{Description: "A managed PostgreSQL, Percona Server or MariaDB database, reached at one endpoint. Destroying it takes a final backup unless final_backup_on_destroy is false.", Attributes: map[string]schema.Attribute{
 		"id":              computed("Database ID (dbi_)."),
@@ -172,7 +173,13 @@ func (r *databaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	for _, pair := range [][2]attr.Value{{plan.ProjectID, state.ProjectID}, {plan.Engine, state.Engine}, {plan.SubnetID, state.SubnetID}, {plan.StorageVolumeType, state.StorageVolumeType}, {plan.SourceBackupID, state.SourceBackupID}, {plan.SourceDatabaseID, state.SourceDatabaseID}, {plan.SourceTime, state.SourceTime}} {
+	for name, pair := range map[string][2]types.String{"source_backup_id": {plan.SourceBackupID, state.SourceBackupID}, "source_database_id": {plan.SourceDatabaseID, state.SourceDatabaseID}, "source_time": {plan.SourceTime, state.SourceTime}} {
+		if !pair[0].Equal(pair[1]) {
+			resp.Diagnostics.AddAttributeWarning(path.Root(name), name+" only applies at create",
+				"A restore source is used only when the database is created. This change is saved to state and does nothing to the database; to restore again, create a new database.")
+		}
+	}
+	for _, pair := range [][2]attr.Value{{plan.ProjectID, state.ProjectID}, {plan.Engine, state.Engine}, {plan.SubnetID, state.SubnetID}, {plan.StorageVolumeType, state.StorageVolumeType}} {
 		if !pair[0].Equal(pair[1]) {
 			return // Being replaced: the new database takes any version and size.
 		}

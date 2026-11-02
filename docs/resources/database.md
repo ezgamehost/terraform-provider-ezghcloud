@@ -37,9 +37,9 @@ A managed PostgreSQL, Percona Server or MariaDB database, reached at one endpoin
 - `maintenance_window_utc` (String) Weekly maintenance window, ddd:HH:MM-ddd:HH:MM UTC, at least 30 minutes.
 - `operation_timeout` (String) Maximum wait for each asynchronous operation, for example 60m.
 - `parameters` (Map of String) Engine parameters. The whole set: a key left out goes back to its default. Only configured keys are read back.
-- `source_backup_id` (String) Restore this backup (dbb_) into the new database. Set it alone. Changing it replaces the database.
-- `source_database_id` (String) Restore this database (dbi_) at source_time into the new database. Changing it replaces the database.
-- `source_time` (String) Point in time to restore source_database_id at, an RFC 3339 instant. Changing it replaces the database.
+- `source_backup_id` (String) Restore this backup (dbb_) into the new database. Set it alone. Only applies at create: a later change or removal is ignored.
+- `source_database_id` (String) Restore this database (dbi_) at source_time into the new database. Only applies at create: a later change or removal is ignored.
+- `source_time` (String) Point in time to restore source_database_id at, an RFC 3339 instant. Only applies at create: a later change or removal is ignored.
 - `storage_iops` (Number) Provisioned storage IOPS. Changes in place.
 - `storage_throughput_mbps` (Number) Provisioned storage throughput in MB/s. Changes in place.
 - `storage_volume_type` (String) Storage volume type, gp1. Changing it replaces the database.

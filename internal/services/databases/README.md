@@ -8,8 +8,9 @@ resource in state.
 
 | Resource / field | Behavior |
 | --- | --- |
-| Database `project_id`, `engine`, `subnet_id`, `storage_volume_type`, `source_*` | Replacement |
-| Database `engine_version` | Refused at plan: a replacement would destroy data. Major upgrades go through a blue/green deployment; after its switchover, set the new version |
+| Database `project_id`, `engine`, `subnet_id`, `storage_volume_type` | Replacement |
+| Database `source_*` | Set once at create, never a replacement: removing a restore's source must never destroy the database. A later change or removal is saved to state only, with a plan warning |
+| Database `engine_version` | Refused at plan: a replacement would destroy data. Major upgrades go through a blue/green deployment; its switchover keeps the `dbi_`, name and endpoint, so set the new version after it and nothing is replaced |
 | Database `storage_size_gib` | Grows in place; shrinking is refused at plan |
 | Database `description` | `""` reads back as `""` (the API shows it as null) |
 | Database `name`, `description`, `tags`, `instance_type`, `storage_iops`, `storage_throughput_mbps`, `allowed_source_cidrs`, backup and maintenance windows, `backup_retention_days`, `parameters`, `log_exports`, `deletion_protection` | One `PATCH` in place, sending only what changed beyond the row fields |

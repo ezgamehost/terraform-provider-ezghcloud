@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
@@ -24,6 +25,7 @@ type fixture struct {
 	mu      sync.Mutex
 	objects map[string]map[string]any
 	deletes []string // the finalBackup query of each database delete
+	patches int
 	*httptest.Server
 }
 
@@ -69,7 +71,8 @@ func (f *fixture) serve(t *testing.T) func(http.ResponseWriter, *http.Request) {
 				"endpoint": map[string]any{"hostname": "db-123456789abc.us-west-1.ezghcompute.com", "port": 5432}, "description": nil, "allowedSourceCidrs": []any{"10.0.0.0/16"},
 				"storage": map[string]any{"volumeType": "gp1", "iops": 3000, "throughputMBps": 125}, "backup": map[string]any{"retentionDays": 7, "windowUtc": "03:00-03:30"}, "maintenance": map[string]any{"windowUtc": "sun:04:00-sun:04:30"}}
 			for k, v := range body {
-				if k == "source" {
+				if k == "source" { // the source fixes the engine
+					obj["engine"], obj["engineVersion"] = "postgresql", "18"
 					continue
 				}
 				merge(obj, k, v)
@@ -96,6 +99,7 @@ func (f *fixture) serve(t *testing.T) func(http.ResponseWriter, *http.Request) {
 		case f.objects[last] != nil && r.Method == "GET":
 			send(f.objects[last])
 		case f.objects[last] != nil && r.Method == "PATCH":
+			f.patches++
 			obj := f.objects[last]
 			for k, v := range body {
 				merge(obj, k, v)
@@ -182,7 +186,50 @@ data "ezghcloud_database" "orders" {
 				resource.TestCheckResourceAttr("data.ezghcloud_database.orders", "parameters.shared_buffers", "128MB"))},
 			{Config: config("gs-1.xlarge", 40, "17"), ExpectError: regexp.MustCompile(`blue/green deployment`)},
 			{Config: config("gs-1.xlarge", 20, "18"), ExpectError: regexp.MustCompile(`Storage can't shrink`)},
+			// A blue/green switchover keeps the dbi_ and endpoint and moves the version: set it, nothing is replaced.
+			{PreConfig: func() { f.mu.Lock(); f.objects["dbi_123456789abc"]["engineVersion"] = "19"; f.mu.Unlock() },
+				Config: config("gs-1.xlarge", 40, "19", "16MB"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("ezghcloud_database.orders", plancheck.ResourceActionNoop)}},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ezghcloud_database.orders", "id", "dbi_123456789abc"),
+					resource.TestCheckResourceAttr("ezghcloud_database.orders", "engine_version", "19"),
+					resource.TestCheckResourceAttr("ezghcloud_database.orders", "endpoint_hostname", "db-123456789abc.us-west-1.ezghcompute.com"))},
 			{ResourceName: "ezghcloud_database.orders", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id", "parameters", "description"}},
+		}})
+}
+
+// The restore source is set once: removing or changing it updates state only, never the database.
+func TestAccDatabaseRestoreSourceSetOnce(t *testing.T) {
+	f := newFixture(t)
+	config := func(source string) string {
+		return f.provider() + fmt.Sprintf(`
+resource "ezghcloud_database" "restored" {
+ project_id = "prj_test"
+ name = "restored"
+ instance_type = "gs-1.large"
+ storage_size_gib = 20
+ subnet_id = "sbn_123456789abc"
+ final_backup_on_destroy = false
+ %s
+}
+`, source)
+	}
+	update := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("ezghcloud_database.restored", plancheck.ResourceActionUpdate)}}
+	kept := resource.ComposeAggregateTestCheckFunc(
+		resource.TestCheckResourceAttr("ezghcloud_database.restored", "id", "dbi_123456789abc"),
+		func(*terraform.State) error {
+			if f.patches != 0 || len(f.deletes) != 0 {
+				return fmt.Errorf("source change reached the API: %d patches, deletes %v", f.patches, f.deletes)
+			}
+			return nil
+		})
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories,
+		Steps: []resource.TestStep{
+			{Config: config(`source_backup_id = "dbb_123456789abc"`), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_database.restored", "source_backup_id", "dbb_123456789abc"),
+				resource.TestCheckResourceAttr("ezghcloud_database.restored", "engine_version", "18"))},
+			{Config: config(`source_backup_id = "dbb_999999999999"`), ConfigPlanChecks: update, Check: kept},
+			{Config: config(""), ConfigPlanChecks: update, Check: resource.ComposeAggregateTestCheckFunc(kept,
+				resource.TestCheckNoResourceAttr("ezghcloud_database.restored", "source_backup_id"))},
 		}})
 }
 

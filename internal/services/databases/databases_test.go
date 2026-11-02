@@ -10,6 +10,7 @@ import (
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -145,6 +146,27 @@ func TestDatabaseUnknownRestoreSourceWaitsForApply(t *testing.T) {
 	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: tfsdk.State{Schema: p.Schema, Raw: tftypes.NewValue(p.Schema.Type().TerraformType(ctx), nil)}, Plan: tfsdk.Plan{Schema: p.Schema, Raw: p.Raw}}, &resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatal(resp.Diagnostics)
+	}
+}
+
+// A restore source is set once: changing or removing it warns and never replaces the database.
+func TestDatabaseRestoreSourceSetOnce(t *testing.T) {
+	ctx := context.Background()
+	for name, a := range schemaOf(&databaseResource{}).Schema.Attributes {
+		if strings.HasPrefix(name, "source_") && len(a.(schema.StringAttribute).PlanModifiers) != 0 {
+			t.Fatalf("%s has plan modifiers", name)
+		}
+	}
+	state, plan := available(ctx), available(ctx)
+	state.SourceBackupID = types.StringValue("dbb_123456789abc")
+	resp := modifyPlan(t, state, plan)
+	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 1 || len(resp.RequiresReplace) != 0 {
+		t.Fatalf("source removal: %v, replace %v", resp.Diagnostics, resp.RequiresReplace)
+	}
+	// A source change isn't a replacement, so the version check still holds.
+	plan.EngineVersion = types.StringValue("17")
+	if resp := modifyPlan(t, state, plan); !resp.Diagnostics.HasError() {
+		t.Fatal("engine version change planned beside a source change")
 	}
 }
 
