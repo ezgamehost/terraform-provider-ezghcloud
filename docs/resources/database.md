@@ -17,11 +17,11 @@ A managed PostgreSQL, Percona Server or MariaDB database, reached at one endpoin
 
 ### Required
 
-- `instance_type` (String) A gp-1 or gs-1 instance type. Changes in place.
+- `instance_type` (String) A gp-1 or gs-1 instance type. Changes in place. After a blue/green switchover to a new instance type, set it to that type.
 - `name` (String) Database name.
-- `project_id` (String) Project identifier. Changing it replaces the database.
+- `project_id` (String) Project identifier. It can't change: a replacement would destroy the database's data, so a change is refused at plan.
 - `storage_size_gib` (Number) Storage size in GiB. Grows in place; shrinking is refused.
-- `subnet_id` (String) Subnet (sbn_) the endpoint lives in. Changing it replaces the database.
+- `subnet_id` (String) Subnet (sbn_) the endpoint lives in. It can't change: a replacement would destroy the database's data, so a change is refused at plan.
 
 ### Optional
 
@@ -30,7 +30,7 @@ A managed PostgreSQL, Percona Server or MariaDB database, reached at one endpoin
 - `backup_window_utc` (String) Daily backup window, HH:MM-HH:MM UTC, at least 30 minutes.
 - `deletion_protection` (Boolean) While true, the database can't be destroyed.
 - `description` (String) Optional description; null clears it.
-- `engine` (String) postgresql, percona or mariadb. Required unless restoring, where the source fixes it. Changing it replaces the database.
+- `engine` (String) postgresql, percona or mariadb. Required unless restoring, where the source fixes it. It can't change: a replacement would destroy the database's data, so a change is refused at plan.
 - `engine_version` (String) Engine major version. Required unless restoring, where the source fixes it. It can't change here, because a replacement would destroy data: major upgrades go through a blue/green deployment, after which set it to the new version.
 - `final_backup_on_destroy` (Boolean) Take a final backup, which outlives the database, when destroying it.
 - `log_exports` (Set of String) Engine logs sent to Observability: error, slow and audit.
@@ -42,7 +42,7 @@ A managed PostgreSQL, Percona Server or MariaDB database, reached at one endpoin
 - `source_time` (String) Point in time to restore source_database_id at, an RFC 3339 instant. Only applies at create: a later change or removal is ignored.
 - `storage_iops` (Number) Provisioned storage IOPS. Changes in place.
 - `storage_throughput_mbps` (Number) Provisioned storage throughput in MB/s. Changes in place.
-- `storage_volume_type` (String) Storage volume type, gp1. Changing it replaces the database.
+- `storage_volume_type` (String) Storage volume type, gp1. It can't change: a replacement would destroy the database's data, so a change is refused at plan.
 - `tags` (Map of String) Resource tags.
 
 ### Read-Only

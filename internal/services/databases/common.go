@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -106,8 +108,19 @@ func configure(data any, d *diag.Diagnostics, c **client.Client) {
 	}
 	*c = v
 }
+
+// apiError adds databases-api's own message and extras (restorable ranges, precheck reasons, field
+// issues); an access denial keeps the provider's rule of naming only the permission.
 func apiError(d *diag.Diagnostics, err error) {
-	d.AddError("EZGH Cloud API request failed", err.Error())
+	detail := err.Error()
+	var e *client.Error
+	if errors.As(err, &e) && e.Code != "access_denied" && e.Message != "" {
+		detail += "\n" + e.Message
+		for _, k := range slices.Sorted(maps.Keys(e.Details)) {
+			detail += "\n" + k + ": " + string(e.Details[k])
+		}
+	}
+	d.AddError("EZGH Cloud API request failed", detail)
 }
 func isNotFound(err error) bool {
 	var e *client.Error

@@ -30,9 +30,9 @@ Read an existing EZGH Cloud database by its ID.
 - `description` (String) Optional description; null clears it.
 - `endpoint_hostname` (String) The endpoint's DNS name; null until it resolves.
 - `endpoint_port` (Number) The endpoint's port.
-- `engine` (String) postgresql, percona or mariadb. Required unless restoring, where the source fixes it. Changing it replaces the database.
+- `engine` (String) postgresql, percona or mariadb. Required unless restoring, where the source fixes it. It can't change: a replacement would destroy the database's data, so a change is refused at plan.
 - `engine_version` (String) Engine major version. Required unless restoring, where the source fixes it. It can't change here, because a replacement would destroy data: major upgrades go through a blue/green deployment, after which set it to the new version.
-- `instance_type` (String) A gp-1 or gs-1 instance type. Changes in place.
+- `instance_type` (String) A gp-1 or gs-1 instance type. Changes in place. After a blue/green switchover to a new instance type, set it to that type.
 - `log_exports` (Set of String) Engine logs sent to Observability: error, slow and audit.
 - `maintenance_window_utc` (String) Weekly maintenance window, ddd:HH:MM-ddd:HH:MM UTC, at least 30 minutes.
 - `name` (String) Database name.
@@ -43,7 +43,7 @@ Read an existing EZGH Cloud database by its ID.
 - `storage_iops` (Number) Provisioned storage IOPS. Changes in place.
 - `storage_size_gib` (Number) Storage size in GiB. Grows in place; shrinking is refused.
 - `storage_throughput_mbps` (Number) Provisioned storage throughput in MB/s. Changes in place.
-- `storage_volume_type` (String) Storage volume type, gp1. Changing it replaces the database.
-- `subnet_id` (String) Subnet (sbn_) the endpoint lives in. Changing it replaces the database.
+- `storage_volume_type` (String) Storage volume type, gp1. It can't change: a replacement would destroy the database's data, so a change is refused at plan.
+- `subnet_id` (String) Subnet (sbn_) the endpoint lives in. It can't change: a replacement would destroy the database's data, so a change is refused at plan.
 - `tags` (Map of String) Resource tags.
 - `vpc_id` (String) VPC of the subnet.

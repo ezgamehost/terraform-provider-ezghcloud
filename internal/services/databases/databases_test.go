@@ -9,6 +9,7 @@ import (
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -163,11 +164,13 @@ func TestDatabaseRestoreSourceSetOnce(t *testing.T) {
 	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 1 {
 		t.Fatalf("source removal: %v", resp.Diagnostics)
 	}
-	// Beside a replacement the warning would be wrong: the new database is restored from the new source.
-	replaced := plan
-	replaced.SubnetID = types.StringValue("sbn_999999999999")
-	if resp := modifyPlan(t, state, replaced); resp.Diagnostics.WarningsCount() != 0 {
-		t.Fatalf("warned beside a replacement: %v", resp.Diagnostics)
+	// Nothing replaces a database: a subnet change, known or not, is refused at plan.
+	for _, subnet := range []types.String{types.StringValue("sbn_999999999999"), types.StringUnknown()} {
+		moved := plan
+		moved.SubnetID = subnet
+		if resp := modifyPlan(t, state, moved); !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "restore a backup or a point in time into a new database") {
+			t.Fatalf("subnet change planned: %v", resp.Diagnostics)
+		}
 	}
 	// A source change isn't a replacement, so the version check still holds.
 	plan.EngineVersion = types.StringValue("17")
@@ -246,5 +249,18 @@ func TestSchemasValidate(t *testing.T) {
 		if s.Schema.Attributes["operation_timeout"] != nil || !s.Schema.Attributes["id"].IsRequired() {
 			t.Fatal("data source schema carries provider-only attributes")
 		}
+	}
+}
+
+func TestDatabaseErrorsCarryMessageAndExtras(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(409)
+		_, _ = w.Write([]byte(`{"error":{"code":"time_not_restorable","message":"That time isn't restorable","restorableRanges":[{"from":"2026-11-01T00:00:00.000Z","to":"2026-11-02T00:00:00.000Z"}]}}`))
+	})
+	_, err := c.Do(context.Background(), service, "GET", "/v1/x", nil)
+	var d diag.Diagnostics
+	apiError(&d, err)
+	if got := d.Errors()[0].Detail(); !strings.Contains(got, "That time isn't restorable") || !strings.Contains(got, `restorableRanges: [{"from":"2026-11-01T00:00:00.000Z"`) {
+		t.Fatal(got)
 	}
 }

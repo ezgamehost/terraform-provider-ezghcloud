@@ -23,7 +23,7 @@ Read an existing EZGH Cloud database_backup by its ID.
 ### Read-Only
 
 - `created_at` (String) When it was taken.
-- `database_id` (String) Database (dbi_) to back up. Changing it takes a new backup.
+- `database_id` (String) Database (dbi_) to back up. It can't change, and a replacement of the database is refused while this backup names its ID: either would delete the backup. To keep it past a replacement, write the dbi_ ID as a literal rather than the database's id attribute.
 - `engine` (String) Engine of the database it was taken of.
 - `engine_version` (String) Engine version it was taken at.
 - `expires_at` (String) When it expires; null for a manual backup kept until deleted.

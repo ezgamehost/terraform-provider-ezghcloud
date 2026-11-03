@@ -53,6 +53,9 @@ type Error struct {
 	StatusCode               int
 	Code, Message, RequestID string
 	Permission               string
+	// Details are the error object's other fields (issues, reasons, restorableRanges), raw.
+	// Error() leaves them and Message out; a service that trusts its own text adds them.
+	Details map[string]json.RawMessage
 }
 
 func (e *Error) Error() string {
@@ -171,6 +174,12 @@ func (c *Client) DoWithHeaders(ctx context.Context, service, method, path string
 		if json.Unmarshal(data, &envelope) == nil && envelope.Error.Code != "" {
 			apiErr.Code = envelope.Error.Code
 			apiErr.Message = envelope.Error.Message
+			var raw struct{ Error map[string]json.RawMessage }
+			if json.Unmarshal(data, &raw) == nil {
+				delete(raw.Error, "code")
+				delete(raw.Error, "message")
+				apiErr.Details = raw.Error
+			}
 			if apiErr.Code == "access_denied" {
 				if match := permissionMessage.FindStringSubmatch(apiErr.Message); len(match) == 2 {
 					apiErr.Permission = match[1]

@@ -84,6 +84,11 @@ type databaseView struct {
 
 type databaseResource struct{ client *client.Client }
 
+const (
+	noReplace = "a replacement would destroy the database's data, so a change is refused at plan."
+	moveData  = "To move it, create a new database and move the data, or restore a backup or a point in time into a new database, then remove this one."
+)
+
 func (*databaseResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_database"
 }
@@ -91,7 +96,6 @@ func (*databaseResource) Metadata(_ context.Context, req resource.MetadataReques
 var (
 	keepString = []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	keepInt    = []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}
-	replace    = []planmodifier.String{stringplanmodifier.RequiresReplace()}
 )
 
 func (*databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -109,23 +113,22 @@ func (*databaseResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		return schema.StringAttribute{Optional: true, Description: d + " Only applies at create: a later change or removal is ignored."}
 	}
 	resp.Schema = schema.Schema{Description: "A managed PostgreSQL, Percona Server or MariaDB database, reached at one endpoint. Destroying it takes a final backup unless final_backup_on_destroy is false.", Attributes: map[string]schema.Attribute{
-		"id":              computed("Database ID (dbi_)."),
-		"organization_id": computed("Organization managed by the configured provider."),
-		"project_id":      schema.StringAttribute{Required: true, Description: "Project identifier. Changing it replaces the database.", PlanModifiers: replace},
-		"resource_name":   computed("IAM resource name."),
-		"name":            schema.StringAttribute{Required: true, Description: "Database name."},
-		"description":     schema.StringAttribute{Optional: true, Description: "Optional description; null clears it."},
-		"tags":            schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Resource tags."},
-		"engine":          schema.StringAttribute{Optional: true, Computed: true, Description: "postgresql, percona or mariadb. Required unless restoring, where the source fixes it. Changing it replaces the database.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}},
-		"engine_version":  optional("Engine major version. Required unless restoring, where the source fixes it. It can't change here, because a replacement would destroy data: major upgrades go through a blue/green deployment, after which set it to the new version."),
-		"instance_type":   schema.StringAttribute{Required: true, Description: "A gp-1 or gs-1 instance type. Changes in place."},
-		"storage_volume_type": schema.StringAttribute{Optional: true, Computed: true, Description: "Storage volume type, gp1. Changing it replaces the database.",
-			PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplace()}},
+		"id":                      computed("Database ID (dbi_)."),
+		"organization_id":         computed("Organization managed by the configured provider."),
+		"project_id":              schema.StringAttribute{Required: true, Description: "Project identifier. It can't change: " + noReplace},
+		"resource_name":           computed("IAM resource name."),
+		"name":                    schema.StringAttribute{Required: true, Description: "Database name."},
+		"description":             schema.StringAttribute{Optional: true, Description: "Optional description; null clears it."},
+		"tags":                    schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Resource tags."},
+		"engine":                  schema.StringAttribute{Optional: true, Computed: true, Description: "postgresql, percona or mariadb. Required unless restoring, where the source fixes it. It can't change: " + noReplace, PlanModifiers: keepString},
+		"engine_version":          optional("Engine major version. Required unless restoring, where the source fixes it. It can't change here, because a replacement would destroy data: major upgrades go through a blue/green deployment, after which set it to the new version."),
+		"instance_type":           schema.StringAttribute{Required: true, Description: "A gp-1 or gs-1 instance type. Changes in place. After a blue/green switchover to a new instance type, set it to that type."},
+		"storage_volume_type":     optional("Storage volume type, gp1. It can't change: " + noReplace),
 		"storage_size_gib":        schema.Int64Attribute{Required: true, Description: "Storage size in GiB. Grows in place; shrinking is refused."},
 		"storage_iops":            optionalInt("Provisioned storage IOPS. Changes in place."),
 		"storage_throughput_mbps": optionalInt("Provisioned storage throughput in MB/s. Changes in place."),
 		"vpc_id":                  computed("VPC of the subnet."),
-		"subnet_id":               schema.StringAttribute{Required: true, Description: "Subnet (sbn_) the endpoint lives in. Changing it replaces the database.", PlanModifiers: replace},
+		"subnet_id":               schema.StringAttribute{Required: true, Description: "Subnet (sbn_) the endpoint lives in. It can't change: " + noReplace},
 		"allowed_source_cidrs":    schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "1 to 20 IPv4 CIDRs allowed to connect. Left out, the VPC's ranges.", PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}},
 		"endpoint_hostname":       computed("The endpoint's DNS name; null until it resolves."),
 		"endpoint_port":           schema.Int64Attribute{Computed: true, Description: "The endpoint's port.", PlanModifiers: keepInt},
@@ -173,12 +176,17 @@ func (r *databaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	for _, pair := range [][2]attr.Value{{plan.ProjectID, state.ProjectID}, {plan.Engine, state.Engine}, {plan.SubnetID, state.SubnetID}, {plan.StorageVolumeType, state.StorageVolumeType}} {
+	// Nothing replaces a database. An unknown value counts as a change: a replaced subnet or project.
+	for name, pair := range map[string][2]types.String{"project_id": {plan.ProjectID, state.ProjectID}, "engine": {plan.Engine, state.Engine}, "subnet_id": {plan.SubnetID, state.SubnetID}, "storage_volume_type": {plan.StorageVolumeType, state.StorageVolumeType}} {
 		if !pair[0].Equal(pair[1]) {
-			return // Being replaced: the new database takes any version and size.
+			to := "a value known only at apply"
+			if known(pair[0]) {
+				to = pair[0].ValueString()
+			}
+			resp.Diagnostics.AddAttributeError(path.Root(name), name+" can't change", fmt.Sprintf("Changing %s from %s to %s would replace the database and destroy its data and its point-in-time history. %s", name, pair[1].ValueString(), to, moveData))
 		}
 	}
-	// Not replaced, so a source change only reaches state.
+	// The database is never replaced, so a source change only reaches state.
 	for name, pair := range map[string][2]types.String{"source_backup_id": {plan.SourceBackupID, state.SourceBackupID}, "source_database_id": {plan.SourceDatabaseID, state.SourceDatabaseID}, "source_time": {plan.SourceTime, state.SourceTime}} {
 		if !pair[0].Equal(pair[1]) {
 			resp.Diagnostics.AddAttributeWarning(path.Root(name), name+" only applies at create",
@@ -188,6 +196,10 @@ func (r *databaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPl
 	if known(plan.EngineVersion) && !plan.EngineVersion.Equal(state.EngineVersion) {
 		resp.Diagnostics.AddAttributeError(path.Root("engine_version"), "engine_version can't change",
 			fmt.Sprintf("Changing engine_version from %s to %s would replace the database and destroy its data. Major upgrades go through a blue/green deployment; after its switchover, set engine_version to the new version.", state.EngineVersion.ValueString(), plan.EngineVersion.ValueString()))
+	}
+	if known(plan.InstanceType) && !plan.InstanceType.Equal(state.InstanceType) {
+		resp.Diagnostics.AddAttributeWarning(path.Root("instance_type"), "instance_type resizes the database",
+			fmt.Sprintf("Applying resizes the database from %[1]s to %[2]s. If a blue/green deployment's switchover moved it to %[1]s, set instance_type to %[1]s instead.", state.InstanceType.ValueString(), plan.InstanceType.ValueString()))
 	}
 	if known(plan.StorageSizeGiB) && plan.StorageSizeGiB.ValueInt64() < state.StorageSizeGiB.ValueInt64() {
 		resp.Diagnostics.AddAttributeError(path.Root("storage_size_gib"), "Storage can't shrink", fmt.Sprintf("storage_size_gib must be at least %d.", state.StorageSizeGiB.ValueInt64()))

@@ -17,8 +17,8 @@ A manual backup of a database. It outlives the database; destroying it deletes t
 
 ### Required
 
-- `database_id` (String) Database (dbi_) to back up. Changing it takes a new backup.
-- `project_id` (String) Project identifier. Changing it replaces the backup.
+- `database_id` (String) Database (dbi_) to back up. It can't change, and a replacement of the database is refused while this backup names its ID: either would delete the backup. To keep it past a replacement, write the dbi_ ID as a literal rather than the database's id attribute.
+- `project_id` (String) Project identifier. It can't change: a replacement would delete the backup.
 
 ### Optional
 

@@ -51,8 +51,8 @@ func (*backupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 	resp.Schema = schema.Schema{Description: "A manual backup of a database. It outlives the database; destroying it deletes the backup.", Attributes: map[string]schema.Attribute{
 		"id":                computed("Backup ID (dbb_)."),
 		"organization_id":   computed("Organization managed by the configured provider."),
-		"project_id":        schema.StringAttribute{Required: true, Description: "Project identifier. Changing it replaces the backup.", PlanModifiers: replace},
-		"database_id":       schema.StringAttribute{Required: true, Description: "Database (dbi_) to back up. Changing it takes a new backup.", PlanModifiers: replace},
+		"project_id":        schema.StringAttribute{Required: true, Description: "Project identifier. It can't change: a replacement would delete the backup."},
+		"database_id":       schema.StringAttribute{Required: true, Description: "Database (dbi_) to back up. It can't change, and a replacement of the database is refused while this backup names its ID: either would delete the backup. To keep it past a replacement, write the dbi_ ID as a literal rather than the database's id attribute."},
 		"resource_name":     computed("IAM resource name."),
 		"kind":              computed("manual."),
 		"engine":            computed("Engine of the database it was taken of."),
@@ -141,7 +141,26 @@ func (r *backupResource) Read(ctx context.Context, req resource.ReadRequest, res
 	r.refresh(waitCtx, &m, &resp.State, &resp.Diagnostics)
 }
 
-// Update changes only operation_timeout: every other input replaces the backup.
+// ModifyPlan refuses any change that would delete the backup, which outlives its database. An unknown
+// database_id is the database being replaced (-replace or taint).
+func (r *backupResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	var plan, state backupModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	for name, pair := range map[string][2]types.String{"project_id": {plan.ProjectID, state.ProjectID}, "database_id": {plan.DatabaseID, state.DatabaseID}} {
+		if !pair[0].Equal(pair[1]) {
+			resp.Diagnostics.AddAttributeError(path.Root(name), name+" can't change", fmt.Sprintf("Changing %s, or replacing database %s, would delete backup %s, which outlives its database. To back up another database, add a new ezghcloud_database_backup. To keep this backup while its database is replaced, set database_id to %q.", name, state.DatabaseID.ValueString(), state.ID.ValueString(), state.DatabaseID.ValueString()))
+		}
+	}
+}
+
+// Update changes only operation_timeout: every other input is refused at plan.
 func (r *backupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var m backupModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)

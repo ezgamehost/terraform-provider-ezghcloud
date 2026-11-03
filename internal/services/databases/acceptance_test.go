@@ -186,6 +186,9 @@ data "ezghcloud_database" "orders" {
 				resource.TestCheckResourceAttr("data.ezghcloud_database.orders", "parameters.shared_buffers", "128MB"))},
 			{Config: config("gs-1.xlarge", 40, "17"), ExpectError: regexp.MustCompile(`blue/green deployment`)},
 			{Config: config("gs-1.xlarge", 20, "18"), ExpectError: regexp.MustCompile(`Storage can't shrink`)},
+			// Nothing replaces a database: these are refused at plan, never a -/+.
+			{Config: strings.Replace(config("gs-1.xlarge", 40, "18", "16MB"), "sbn_123456789abc", "sbn_999999999999", 1), ExpectError: regexp.MustCompile(`subnet_id can't change`)},
+			{Config: strings.Replace(config("gs-1.xlarge", 40, "18", "16MB"), `engine = "postgresql"`, `engine = "postgres"`, 1), ExpectError: regexp.MustCompile(`engine can't change`)},
 			// A blue/green switchover keeps the dbi_ and endpoint and moves the version: set it, nothing is replaced.
 			{PreConfig: func() { f.mu.Lock(); f.objects["dbi_123456789abc"]["engineVersion"] = "19"; f.mu.Unlock() },
 				Config: config("gs-1.xlarge", 40, "19", "16MB"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("ezghcloud_database.orders", plancheck.ResourceActionNoop)}},
@@ -269,6 +272,9 @@ data "ezghcloud_database_backup" "before" {
 				resource.TestCheckNoResourceAttr("ezghcloud_database_backup.before", "expires_at"),
 				resource.TestCheckResourceAttr("data.ezghcloud_database_backup.before", "database_id", "dbi_123456789abc"),
 				resource.TestCheckResourceAttr("data.ezghcloud_database_backup.before", "size_bytes", "1048576"))},
+			// A backup outlives its database: neither a new database_id nor the database's replacement deletes it.
+			{Config: strings.Replace(config, "ezghcloud_database.orders.id", `"dbi_999999999999"`, 1), ExpectError: regexp.MustCompile(`database_id can't change`)},
+			{Config: config, Taint: []string{"ezghcloud_database.orders"}, ExpectError: regexp.MustCompile(`database_id can't change`)},
 			{ResourceName: "ezghcloud_database_backup.before", ImportState: true, ImportStateId: "org_test/prj_test/dbb_123456789abc", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id"}},
 		}})
 }
