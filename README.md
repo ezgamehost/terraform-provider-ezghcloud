@@ -78,8 +78,8 @@ TF_ACC=1 go test -race -timeout 7m ./...
 go tool tfplugindocs generate --provider-name ezghcloud
 ```
 
-Default tests and acceptance fixtures create no real cloud resources. Live acceptance
-against EZGH Cloud has not been run. Do not point fixture tests at a live endpoint.
+Default tests and acceptance fixtures create no real cloud resources. The only live test, `TestLiveDatabaseLifecycle`,
+passed against production on 2026-11-03 (create, resize 20 to 30 GiB, destroy; 244 s). Do not point fixture tests at a live endpoint.
 
 ## Releases
 
