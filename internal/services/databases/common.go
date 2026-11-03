@@ -114,7 +114,7 @@ func configure(data any, d *diag.Diagnostics, c **client.Client) {
 func apiError(d *diag.Diagnostics, err error) {
 	detail := err.Error()
 	var e *client.Error
-	if errors.As(err, &e) && e.Code != "access_denied" && e.Message != "" {
+	if errors.As(err, &e) && e.Code != "access_denied" {
 		detail += "\n" + e.Message
 		for _, k := range slices.Sorted(maps.Keys(e.Details)) {
 			detail += "\n" + k + ": " + string(e.Details[k])

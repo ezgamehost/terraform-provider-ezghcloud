@@ -153,10 +153,11 @@ func (r *backupResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	for name, pair := range map[string][2]types.String{"project_id": {plan.ProjectID, state.ProjectID}, "database_id": {plan.DatabaseID, state.DatabaseID}} {
-		if !pair[0].Equal(pair[1]) {
-			resp.Diagnostics.AddAttributeError(path.Root(name), name+" can't change", fmt.Sprintf("Changing %s, or replacing database %s, would delete backup %s, which outlives its database. To back up another database, add a new ezghcloud_database_backup. To keep this backup while its database is replaced, set database_id to %q.", name, state.DatabaseID.ValueString(), state.ID.ValueString(), state.DatabaseID.ValueString()))
-		}
+	if !plan.ProjectID.Equal(state.ProjectID) {
+		resp.Diagnostics.AddAttributeError(path.Root("project_id"), "project_id can't change", fmt.Sprintf("Changing project_id would delete backup %s, which outlives its database. To back up a database in another project, add a new ezghcloud_database_backup.", state.ID.ValueString()))
+	}
+	if !plan.DatabaseID.Equal(state.DatabaseID) {
+		resp.Diagnostics.AddAttributeError(path.Root("database_id"), "database_id can't change", fmt.Sprintf("Changing database_id, or replacing database %[1]s, would delete backup %[2]s, which outlives its database. To back up another database, add a new ezghcloud_database_backup. To keep this backup while its database is replaced, set database_id to %[1]q.", state.DatabaseID.ValueString(), state.ID.ValueString()))
 	}
 }
 

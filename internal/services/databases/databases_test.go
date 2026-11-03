@@ -97,6 +97,32 @@ func TestDatabaseCreateRetainsIdentityOnFailedOperation(t *testing.T) {
 	}
 }
 
+// A create that outlasts its wait isn't failed: an error would taint it, and the next apply would destroy it.
+func TestDatabaseCreateTimeoutKeepsDatabase(t *testing.T) {
+	ctx := context.Background()
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.Header().Set("Location", "/v1/organizations/org_test/operations/op1")
+			w.WriteHeader(202)
+			_, _ = w.Write([]byte(`{"id":"op1","status":"pending","target":{"id":"0193","resourceName":"ezgh:databases:us-west-1:org:prj/dbi_123456789abc","type":"database"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"op1","status":"running"}`))
+	})
+	r := &databaseResource{client: c}
+	m := planned(ctx) // operation_timeout 1s
+	p := asState(t, r, &m)
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: p.Schema}}
+	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: p.Schema, Raw: p.Raw}}, &resp)
+	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 1 {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got databaseModel
+	if d := resp.State.Get(ctx, &got); d.HasError() || got.Status.ValueString() != "creating" || got.OperationID.ValueString() != "op1" {
+		t.Fatalf("%v %#v", d, got)
+	}
+}
+
 func TestDatabaseShrinkRefused(t *testing.T) {
 	ctx := context.Background()
 	state, plan := available(ctx), available(ctx)
@@ -164,12 +190,16 @@ func TestDatabaseRestoreSourceSetOnce(t *testing.T) {
 	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 1 {
 		t.Fatalf("source removal: %v", resp.Diagnostics)
 	}
-	// Nothing replaces a database: a subnet change, known or not, is refused at plan.
-	for _, subnet := range []types.String{types.StringValue("sbn_999999999999"), types.StringUnknown()} {
-		moved := plan
-		moved.SubnetID = subnet
-		if resp := modifyPlan(t, state, moved); !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "restore a backup or a point in time into a new database") {
-			t.Fatalf("subnet change planned: %v", resp.Diagnostics)
+	// Nothing replaces a database: each of these, known or not, is refused at plan.
+	for _, field := range []*types.String{&plan.SubnetID, &plan.ProjectID, &plan.Engine, &plan.StorageVolumeType} {
+		for _, v := range []types.String{types.StringValue("other"), types.StringUnknown()} {
+			was := *field
+			*field = v
+			resp := modifyPlan(t, state, plan)
+			*field = was
+			if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "restore a backup or a point in time into a new database") {
+				t.Fatalf("%v planned: %v", v, resp.Diagnostics)
+			}
 		}
 	}
 	// A source change isn't a replacement, so the version check still holds.
@@ -261,6 +291,17 @@ func TestDatabaseErrorsCarryMessageAndExtras(t *testing.T) {
 	var d diag.Diagnostics
 	apiError(&d, err)
 	if got := d.Errors()[0].Detail(); !strings.Contains(got, "That time isn't restorable") || !strings.Contains(got, `restorableRanges: [{"from":"2026-11-01T00:00:00.000Z"`) {
+		t.Fatal(got)
+	}
+	// An access denial names only the permission, as everywhere in the provider.
+	c = testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"error":{"code":"access_denied","message":"Not allowed to databases.create; secret-token","x":1}}`))
+	})
+	_, err = c.Do(context.Background(), service, "GET", "/v1/x", nil)
+	d = diag.Diagnostics{}
+	apiError(&d, err)
+	if got := d.Errors()[0].Detail(); !strings.Contains(got, "databases.create") || strings.Contains(got, "secret-token") || strings.Contains(got, "x:") {
 		t.Fatal(got)
 	}
 }

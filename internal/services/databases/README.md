@@ -25,6 +25,11 @@ resource in state.
 API errors add databases-api's message and its extras (`restorableRanges`, `reasons`, `issues`); an
 `access_denied` names only the permission, as elsewhere in the provider.
 
+Taint and `-replace` (or `replace_triggered_by`) of a database are explicit and still replace it,
+unless a backup names it by attribute. A create whose wait ends (timeout or interrupt) while the
+database is still `creating` is a warning, not an error, so it isn't tainted and destroyed by the next
+apply; refresh resumes the wait. A failed create is an error and is tainted.
+
 `operation_timeout` defaults to `60m`. Refresh resumes a `creating` database or backup through its saved operation; a `deleting` database
 stays in state until it's gone. A `404` is read as gone only after the project read
 succeeds. Import IDs are `organization_id/project_id/dbi_…` or `…/dbb_…`; `source_*`, `operation_id`

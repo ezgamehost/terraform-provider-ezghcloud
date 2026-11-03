@@ -2,6 +2,7 @@ package databases
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
@@ -263,6 +264,11 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 	if err = waitResponse(ctx, r.client, out); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			// An error would taint it, and the next apply would destroy a database still being created.
+			resp.Diagnostics.AddWarning("Database still being created", fmt.Sprintf("Database %s was still being created when the wait ended. The next refresh or apply waits for operation %s.", id, m.OperationID.ValueString()))
+			return
+		}
 		apiError(&resp.Diagnostics, fmt.Errorf("database %s, operation %s: %w", id, m.OperationID.ValueString(), err))
 		return
 	}
