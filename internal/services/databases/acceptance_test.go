@@ -14,19 +14,22 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 var factories = map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(provider.New("test")())}
 
 // fixture is databases-api over memory: every operation succeeds at once.
 type fixture struct {
-	mu      sync.Mutex
-	objects map[string]map[string]any
-	deletes []string // the finalBackup query of each database delete
-	patches int
-	calls   []string // logical database and user calls: METHOD path-after-the-database
+	mu        sync.Mutex
+	objects   map[string]map[string]any
+	deletes   []string // the finalBackup query of each database delete
+	patches   int
+	calls     []string // logical database and user calls: METHOD path-after-the-database
+	failPatch bool     // the next user PATCH answers 500
 	*httptest.Server
 }
 
@@ -157,6 +160,10 @@ func (f *fixture) child(w http.ResponseWriter, method string, parts []string, bo
 		send(map[string]any{"error": map[string]any{"code": "not_found", "message": "missing"}})
 	case method == "GET":
 		send(obj)
+	case method == "PATCH" && f.failPatch:
+		f.failPatch = false
+		w.WriteHeader(500)
+		send(map[string]any{"error": map[string]any{"code": "internal", "message": "PATCH failed"}})
 	case method == "PATCH":
 		obj["preset"] = body["preset"]
 		accepted("modify-"+name, parts[6]+"/"+key)
@@ -383,9 +390,12 @@ resource "ezghcloud_database_user" "app" {
 				resource.TestCheckResourceAttr("ezghcloud_database_logical_database.shop", "status", "available"),
 				calls("POST logical-databases", "POST users"))},
 			// A preset change is one PATCH in place, never a replacement.
-			{Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionUpdate, "ezghcloud_database_user.app"), Check: resource.ComposeAggregateTestCheckFunc(
-				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "preset", "readOnly"),
-				calls("PATCH users/app"))},
+			{Config: config("readOnly"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+				plancheck.ExpectResourceAction("ezghcloud_database_user.app", plancheck.ResourceActionUpdate),
+				plancheck.ExpectKnownValue("ezghcloud_database_user.app", tfjsonpath.New("secret_id"), knownvalue.StringExact("sec_222222222222"))}},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ezghcloud_database_user.app", "preset", "readOnly"),
+					calls("PATCH users/app"))},
 			// Dropped in SQL: missing plans an in-place update, which rotates the user and creates the logical database again.
 			{PreConfig: func() { set("users/app", "status", "missing")(); set("logical-databases/shop", "status", "missing")() },
 				Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionUpdate, "ezghcloud_database_user.app", "ezghcloud_database_logical_database.shop"),
@@ -394,6 +404,18 @@ resource "ezghcloud_database_user" "app" {
 					resource.TestCheckResourceAttr("ezghcloud_database_user.app", "secret_id", "sec_333333333333"),
 					resource.TestCheckResourceAttr("ezghcloud_database_logical_database.shop", "status", "available"),
 					calls("POST logical-databases", "POST users/app/rotate-password"))},
+			// A rotate that brought it back is saved before a PATCH that fails, so the retry only PATCHes.
+			{PreConfig: func() {
+				set("users/app", "status", "missing")()
+				f.mu.Lock()
+				f.failPatch, f.calls = true, nil
+				f.mu.Unlock()
+			},
+				Config: config("readWrite"), ExpectError: regexp.MustCompile(`PATCH failed`)},
+			{Config: config("readWrite"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "preset", "readWrite"),
+				calls("POST users/app/rotate-password", "PATCH users/app", "PATCH users/app"))},
+			{Config: config("readOnly"), Check: calls("PATCH users/app")},
 			// A 404 removes it from state, so the plan creates it.
 			{PreConfig: func() { f.mu.Lock(); delete(f.objects, "users/app"); f.mu.Unlock() },
 				Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionCreate, "ezghcloud_database_user.app"), Check: calls("POST users")},

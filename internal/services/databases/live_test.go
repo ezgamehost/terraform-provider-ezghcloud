@@ -1,6 +1,7 @@
 package databases_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,8 +68,10 @@ resource "ezghcloud_database" "live" {
 	}
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories,
 		CheckDestroy: func(*terraform.State) error {
-			if secret == "" || readSecret() == nil {
-				return fmt.Errorf("the app user's Secret %q is still there", secret)
+			// ezgh exits 5 on a 404.
+			var exit *exec.ExitError
+			if err := readSecret(); secret == "" || !errors.As(err, &exit) || exit.ExitCode() != 5 {
+				return fmt.Errorf("the app user's Secret %q isn't gone: %v", secret, err)
 			}
 			return nil
 		}, Steps: []resource.TestStep{

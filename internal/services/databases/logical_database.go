@@ -113,7 +113,7 @@ func readState(ctx context.Context, c *client.Client, f *childFields, collection
 // the apply recreates it (DU4: only the next change made through EZGH touches it again). The
 // recreate can change each of unknown (a user's Secret, if the customer deleted it).
 func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse, unknown ...string) {
-	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() || len(resp.RequiresReplace) > 0 {
 		return
 	}
 	var status types.String
@@ -124,6 +124,15 @@ func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *reso
 			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(name), types.StringUnknown())...)
 		}
 	}
+}
+
+// unread handles a failed read after an operation succeeded: an error would taint the object, and
+// replacing it would drop it (or give a user a new password). It keeps what's known, available, and
+// the next refresh reads the rest.
+func unread(ctx context.Context, f *childFields, m any, state *tfsdk.State, diags *diag.Diagnostics, err error) {
+	f.Status = types.StringValue("available")
+	diags.AddWarning("Couldn't read "+f.Name.ValueString(), "Its operation succeeded, but reading it back failed: "+err.Error()+". The next refresh reads it.")
+	diags.Append(setKnown(ctx, state, m)...)
 }
 func deleteChild(ctx context.Context, c *client.Client, f *childFields, collection string, diags *diag.Diagnostics) {
 	if err := f.send(ctx, c, "DELETE", f.path(c, collection), nil, nil); err != nil {
@@ -237,7 +246,7 @@ func (r *logicalDatabaseResource) ImportState(ctx context.Context, req resource.
 func (r *logicalDatabaseResource) refresh(ctx context.Context, m *childFields, state *tfsdk.State, diags *diag.Diagnostics) {
 	v, err := readChild(ctx, r.client, m, "logical-databases")
 	if err != nil {
-		apiError(diags, err)
+		unread(ctx, m, m, state, diags, err)
 		return
 	}
 	m.fill(v, r.client.OrganizationID, true)

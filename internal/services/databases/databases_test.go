@@ -332,6 +332,42 @@ func TestMissingUserPlansAvailable(t *testing.T) {
 	if resp.Diagnostics.HasError() || status.ValueString() != "available" {
 		t.Fatalf("%v %v", resp.Diagnostics, status)
 	}
+	// A replacement creates it anew: status is left alone.
+	resp = resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}, RequiresReplace: path.Paths{path.Root("name")}}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: s, Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}, &resp)
+	resp.Plan.GetAttribute(ctx, path.Root("status"), &status)
+	if status.ValueString() != "missing" {
+		t.Fatalf("replace planned %v", status)
+	}
+}
+
+// A read that fails after the create succeeded warns, so the user isn't tainted and replaced.
+func TestUserCreateUnreadWarns(t *testing.T) {
+	ctx := context.Background()
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST":
+			w.Header().Set("Location", "/v1/organizations/org_test/operations/op1")
+			w.WriteHeader(202)
+			_, _ = w.Write([]byte(`{"id":"op1","status":"pending"}`))
+		case strings.Contains(r.URL.Path, "operations"):
+			_, _ = w.Write([]byte(`{"id":"op1","status":"succeeded"}`))
+		default:
+			w.WriteHeader(500)
+			_, _ = w.Write([]byte(`{"error":{"code":"internal","message":"boom"}}`))
+		}
+	})
+	r := &userResource{client: c}
+	m := userModel{LogicalDatabase: types.StringValue("shop"), Preset: types.StringValue("readWrite"), SecretID: types.StringUnknown()}
+	m.ID, m.OrganizationID, m.ProjectID, m.DatabaseID, m.Name, m.Status = types.StringUnknown(), types.StringUnknown(), types.StringValue("prj_test"), types.StringValue("dbi_123456789abc"), types.StringValue("app"), types.StringUnknown()
+	p := asState(t, r, &m)
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: p.Schema, Raw: tftypes.NewValue(p.Schema.Type().TerraformType(ctx), nil)}}
+	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: p.Schema, Raw: p.Raw}}, &resp)
+	var got userModel
+	resp.State.Get(ctx, &got)
+	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 1 || got.Status.ValueString() != "available" || got.ID.ValueString() != "dbi_123456789abc/app" {
+		t.Fatalf("%v %#v", resp.Diagnostics, got)
+	}
 }
 
 // A create the API refuses (a name made in SQL) saves nothing, so there is nothing to destroy.

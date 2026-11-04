@@ -32,7 +32,7 @@ func (*userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *r
 	a["name"] = schema.StringAttribute{Required: true, Description: "Username: a lowercase letter, then up to 31 lowercase letters, digits and underscores. Changing it replaces the user.", PlanModifiers: replace}
 	a["logical_database"] = schema.StringAttribute{Required: true, Description: "The logical database the preset grants access to. Changing it replaces the user.", PlanModifiers: replace}
 	a["preset"] = schema.StringAttribute{Required: true, Description: "readOnly, readWrite or owner. Changes in place."}
-	a["secret_id"] = schema.StringAttribute{Computed: true, Description: "The Secret (sec_) holding the user's username, password, host, port, database, engine and connection uri. Terraform state never holds the password."}
+	a["secret_id"] = schema.StringAttribute{Computed: true, Description: "The Secret (sec_) holding the user's username, password, host, port, database, engine and connection uri. Terraform state never holds the password.", PlanModifiers: keepString}
 	resp.Schema = schema.Schema{Description: "A user of a database with one preset on one logical database. Its password is generated and kept in a Secret in the project. Destroying it deletes the user and its Secret; tables it created stay.", Attributes: a}
 }
 func (r *userResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -99,6 +99,12 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			apiError(&resp.Diagnostics, err)
 			return
 		}
+		// Saved before the PATCH, so a failed PATCH doesn't leave it missing and rotate again.
+		rotated := m
+		rotated.Preset = old.Preset
+		if r.refresh(ctx, &rotated, &resp.State, &resp.Diagnostics); resp.Diagnostics.HasError() {
+			return
+		}
 	}
 	if !m.Preset.Equal(old.Preset) {
 		if err := m.send(ctx, r.client, "PATCH", m.path(r.client, "users"), map[string]any{"preset": m.Preset.ValueString()}, nil); err != nil {
@@ -122,7 +128,7 @@ func (r *userResource) ImportState(ctx context.Context, req resource.ImportState
 func (r *userResource) refresh(ctx context.Context, m *userModel, state *tfsdk.State, diags *diag.Diagnostics) {
 	v, err := readChild(ctx, r.client, &m.childFields, "users")
 	if err != nil {
-		apiError(diags, err)
+		unread(ctx, &m.childFields, m, state, diags, err)
 		return
 	}
 	m.fill(v, r.client.OrganizationID, true)
