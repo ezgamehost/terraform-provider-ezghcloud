@@ -6,7 +6,8 @@ This provider is under development. Build it locally using the instructions belo
 there is no published Terraform Registry release yet.
 
 The provider covers projects, VPCs, subnets, firewalls, SSH keys,
-instances, volumes, and databases with their backups, plus IAM bots, groups, policies, memberships, policy
+instances, volumes, databases with their backups, and file systems with their mount targets
+and access points, plus IAM bots, groups, policies, memberships, policy
 attachments, API keys, invitations, and federation configuration, with import and
 lookup data sources where supported.
 
