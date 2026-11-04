@@ -10,6 +10,7 @@ import (
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -303,5 +304,32 @@ func TestDatabaseErrorsCarryMessageAndExtras(t *testing.T) {
 	apiError(&d, err)
 	if got := d.Errors()[0].Detail(); !strings.Contains(got, "databases.create") || strings.Contains(got, "secret-token") || strings.Contains(got, "x:") {
 		t.Fatal(got)
+	}
+}
+
+// Users and logical databases keep no secret in state: nothing is sensitive, nothing holds a password.
+func TestChildrenHoldNoPassword(t *testing.T) {
+	for _, r := range []resource.Resource{&userResource{}, &logicalDatabaseResource{}} {
+		for name, a := range schemaOf(r).Schema.Attributes {
+			if strings.Contains(name, "password") || a.IsSensitive() {
+				t.Fatalf("%T has %s", r, name)
+			}
+		}
+	}
+}
+
+// A missing user plans status available, so the plan is an in-place update.
+func TestMissingUserPlansAvailable(t *testing.T) {
+	ctx := context.Background()
+	r := &userResource{}
+	m := userModel{LogicalDatabase: types.StringValue("shop"), Preset: types.StringValue("readWrite"), SecretID: types.StringValue("sec_222222222222")}
+	m.ID, m.OrganizationID, m.ProjectID, m.DatabaseID, m.Name, m.Status = types.StringValue("dbi_123456789abc/app"), types.StringValue("org_test"), types.StringValue("prj_test"), types.StringValue("dbi_123456789abc"), types.StringValue("app"), types.StringValue("missing")
+	s := asState(t, r, &m)
+	resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: s, Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}, &resp)
+	var status types.String
+	resp.Plan.GetAttribute(ctx, path.Root("status"), &status)
+	if resp.Diagnostics.HasError() || status.ValueString() != "available" {
+		t.Fatalf("%v %v", resp.Diagnostics, status)
 	}
 }

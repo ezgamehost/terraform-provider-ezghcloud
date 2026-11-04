@@ -22,6 +22,16 @@ resource in state.
 | Backup `project_id`, `database_id` | Refused at plan, an unknown value too: a replacement would delete the backup, which outlives its database. So `-replace` or a taint of a database a backup names by attribute is refused; a backup that names a literal `dbi_` is kept |
 | Backup destroy | `DELETE` answers with the backup deleting; it has left the project's lists |
 
+| Logical database and user `project_id`, `database_id`, `name`; user `logical_database` | Replace the object. Replacing a logical database drops its data |
+| User `preset` | One `PATCH` in place, so the user and its password stay |
+| User `secret_id` | The Secret holding `username`, `password`, `host`, `port`, `database`, `engine` and `uri`. State never holds the password, and no attribute is sensitive |
+| Logical database and user `status` `missing` | Absent from the engine's latest report (dropped in SQL). The plan shows `status` going to `available`, an in-place update: a user's rotates its password, which creates it again with its preset; a logical database's creates it again. Right after an operation succeeds, `missing` reads as `available`, since the report can trail it |
+| Logical database and user read | A `404`, a row that's `deleting`, or a name made only in SQL removes it from state |
+| Logical database and user import | `organization_id/project_id/dbi_…/name`. A name made in SQL is refused: only objects created through EZGH can be imported |
+
+These were written against the build brief's public shapes (`2026-11-03-databases-users.md` in
+service-template), before databases-api served the routes.
+
 API errors add databases-api's message and its extras (`restorableRanges`, `reasons`, `issues`); an
 `access_denied` names only the permission, as elsewhere in the provider.
 
@@ -40,4 +50,6 @@ Firewall rules take `peer_database_id` (`{"database": "dbi_…"}` on the wire), 
 `TestLiveDatabaseLifecycle` runs only with `TF_ACC=1` and `EZGH_PROFILE=dev`, plus
 `EZGHCLOUD_API_TOKEN`, `EZGHCLOUD_ORGANIZATION_ID`, `EZGHCLOUD_TEST_PROJECT_ID` and
 `EZGHCLOUD_TEST_SUBNET_ID`. It checks `ezgh --profile dev orgs list` lists the organization, then
-creates and destroys one `gs-1.large` database with no final backup.
+creates one `gs-1.large` database, adds a logical database and a `readWrite` user, checks the user's
+Secret exists (`ezgh --profile dev secrets read … --field username`), destroys everything with no
+final backup, and checks the Secret is gone.

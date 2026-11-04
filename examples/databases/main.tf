@@ -40,6 +40,21 @@ resource "ezghcloud_database_backup" "before_migration" {
   database_id = ezghcloud_database.orders.id
 }
 
+# A logical database for the app, and a user with read-write access to it.
+resource "ezghcloud_database_logical_database" "shop" {
+  project_id  = var.project_id
+  database_id = ezghcloud_database.orders.id
+  name        = "shop"
+}
+
+resource "ezghcloud_database_user" "app" {
+  project_id       = var.project_id
+  database_id      = ezghcloud_database.orders.id
+  name             = "app"
+  logical_database = ezghcloud_database_logical_database.shop.name
+  preset           = "readWrite"
+}
+
 # Instances behind this firewall can reach the database.
 resource "ezghcloud_firewall" "app" {
   project_id = var.project_id
@@ -63,4 +78,10 @@ output "endpoint" {
 # The admin username and password live in this Secret, never in Terraform state.
 output "admin_secret_id" {
   value = ezghcloud_database.orders.admin_secret_id
+}
+
+# The app user's password and connection uri live in this Secret, never in Terraform state.
+# Read it with: ezgh secrets read <sec_> --project <prj> --field uri --format raw
+output "app_secret_id" {
+  value = ezghcloud_database_user.app.secret_id
 }

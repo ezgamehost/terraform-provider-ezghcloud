@@ -1,4 +1,5 @@
-// Package databases implements EZGH Databases resources: databases and their manual backups.
+// Package databases implements EZGH Databases resources: databases, their manual backups, logical
+// databases and users.
 package databases
 
 import (
@@ -28,7 +29,8 @@ const service = "databases"
 var prefixedID = regexp.MustCompile(`^[a-z]+_[a-z0-9]{12}$`)
 
 func Resources() []func() resource.Resource {
-	return []func() resource.Resource{func() resource.Resource { return &databaseResource{} }, func() resource.Resource { return &backupResource{} }}
+	return []func() resource.Resource{func() resource.Resource { return &databaseResource{} }, func() resource.Resource { return &backupResource{} },
+		func() resource.Resource { return &logicalDatabaseResource{} }, func() resource.Resource { return &userResource{} }}
 }
 func DataSources() []func() datasource.DataSource {
 	return []func() datasource.DataSource{func() datasource.DataSource { return &lookup{kind: "database"} }, func() datasource.DataSource { return &lookup{kind: "database_backup"} }}

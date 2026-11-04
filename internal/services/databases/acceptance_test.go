@@ -26,6 +26,7 @@ type fixture struct {
 	objects map[string]map[string]any
 	deletes []string // the finalBackup query of each database delete
 	patches int
+	calls   []string // logical database and user calls: METHOD path-after-the-database
 	*httptest.Server
 }
 
@@ -62,6 +63,8 @@ func (f *fixture) serve(t *testing.T) func(http.ResponseWriter, *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		switch {
+		case len(parts) >= 8 && (parts[7] == "users" || parts[7] == "logical-databases"):
+			f.child(w, r.Method, parts, body, send, accepted)
 		case parts[len(parts)-2] == "operations":
 			send(map[string]any{"id": last, "status": "succeeded"})
 		case len(parts) == 5 && parts[3] == "projects":
@@ -122,6 +125,47 @@ func (f *fixture) serve(t *testing.T) func(http.ResponseWriter, *http.Request) {
 			w.WriteHeader(404)
 			send(map[string]any{"error": map[string]any{"code": "not_found", "message": "missing"}})
 		}
+	}
+}
+
+// child serves logical databases and users, keyed by "users/<name>" and "logical-databases/<name>".
+func (f *fixture) child(w http.ResponseWriter, method string, parts []string, body map[string]any, send func(any), accepted func(string, string)) {
+	f.calls = append(f.calls, method+" "+strings.Join(parts[7:], "/"))
+	collection, name := parts[7], ""
+	if len(parts) > 8 {
+		name = parts[8]
+	} else if n, ok := body["name"].(string); ok {
+		name = n
+	}
+	key := collection + "/" + name
+	obj := f.objects[key]
+	switch {
+	case method == "POST" && len(parts) == 8:
+		if obj != nil && obj["status"] != "missing" {
+			w.WriteHeader(409)
+			send(map[string]any{"error": map[string]any{"code": "already_exists", "message": "That name is taken"}})
+			return
+		}
+		obj = map[string]any{"database": parts[6], "name": name, "managed": true, "status": "available", "observedAt": "2026-11-03T10:00:00.000Z", "createdAt": "2026-11-03T10:00:00.000Z"}
+		if collection == "users" {
+			obj["preset"], obj["logicalDatabase"], obj["secret"] = body["preset"], body["logicalDatabase"], "sec_222222222222"
+		}
+		f.objects[key] = obj
+		accepted("create-"+name, parts[6]+"/"+key)
+	case obj == nil:
+		w.WriteHeader(404)
+		send(map[string]any{"error": map[string]any{"code": "not_found", "message": "missing"}})
+	case method == "GET":
+		send(obj)
+	case method == "PATCH":
+		obj["preset"] = body["preset"]
+		accepted("modify-"+name, parts[6]+"/"+key)
+	case method == "POST" && parts[len(parts)-1] == "rotate-password":
+		obj["status"] = "available"
+		accepted("rotate-"+name, parts[6]+"/"+key)
+	case method == "DELETE":
+		delete(f.objects, key)
+		accepted("delete-"+name, parts[6]+"/"+key)
 	}
 }
 func (f *fixture) provider() string {
@@ -276,5 +320,89 @@ data "ezghcloud_database_backup" "before" {
 			{Config: strings.Replace(config, "ezghcloud_database.orders.id", `"dbi_999999999999"`, 1), ExpectError: regexp.MustCompile(`database_id can't change`)},
 			{Config: config, Taint: []string{"ezghcloud_database.orders"}, ExpectError: regexp.MustCompile(`database_id can't change`)},
 			{ResourceName: "ezghcloud_database_backup.before", ImportState: true, ImportStateId: "org_test/prj_test/dbb_123456789abc", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id"}},
+		}})
+}
+
+func TestAccDatabaseUserLifecycle(t *testing.T) {
+	f := newFixture(t)
+	config := func(preset string) string {
+		return f.provider() + fmt.Sprintf(`
+resource "ezghcloud_database_logical_database" "shop" {
+ project_id = "prj_test"
+ database_id = "dbi_123456789abc"
+ name = "shop"
+}
+resource "ezghcloud_database_user" "app" {
+ project_id = "prj_test"
+ database_id = "dbi_123456789abc"
+ name = "app"
+ logical_database = ezghcloud_database_logical_database.shop.name
+ preset = %q
+}
+`, preset)
+	}
+	set := func(key, field string, v any) func() {
+		return func() { f.mu.Lock(); f.objects[key][field] = v; f.mu.Unlock() }
+	}
+	calls := func(want ...string) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			var got []string
+			for _, c := range f.calls {
+				if !strings.HasPrefix(c, "GET ") {
+					got = append(got, c)
+				}
+			}
+			f.calls = nil
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				return fmt.Errorf("calls %v, want %v", got, want)
+			}
+			return nil
+		}
+	}
+	action := func(a plancheck.ResourceActionType, addresses ...string) resource.ConfigPlanChecks {
+		var checks []plancheck.PlanCheck
+		for _, address := range addresses {
+			checks = append(checks, plancheck.ExpectResourceAction(address, a))
+		}
+		return resource.ConfigPlanChecks{PreApply: checks}
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories,
+		CheckDestroy: func(*terraform.State) error {
+			if f.objects["users/app"] != nil || f.objects["logical-databases/shop"] != nil {
+				return fmt.Errorf("left %v", f.objects)
+			}
+			return nil
+		},
+		Steps: []resource.TestStep{
+			{Config: config("readWrite"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "id", "dbi_123456789abc/app"),
+				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "secret_id", "sec_222222222222"),
+				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "status", "available"),
+				resource.TestCheckResourceAttr("ezghcloud_database_logical_database.shop", "status", "available"),
+				calls("POST logical-databases", "POST users"))},
+			// A preset change is one PATCH in place, never a replacement.
+			{Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionUpdate, "ezghcloud_database_user.app"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "preset", "readOnly"),
+				calls("PATCH users/app"))},
+			// Dropped in SQL: missing plans an in-place update, which rotates the user and creates the logical database again.
+			{PreConfig: func() { set("users/app", "status", "missing")(); set("logical-databases/shop", "status", "missing")() },
+				Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionUpdate, "ezghcloud_database_user.app", "ezghcloud_database_logical_database.shop"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ezghcloud_database_user.app", "status", "available"),
+					resource.TestCheckResourceAttr("ezghcloud_database_logical_database.shop", "status", "available"),
+					calls("POST logical-databases", "POST users/app/rotate-password"))},
+			// A 404 removes it from state, so the plan creates it.
+			{PreConfig: func() { f.mu.Lock(); delete(f.objects, "users/app"); f.mu.Unlock() },
+				Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionCreate, "ezghcloud_database_user.app"), Check: calls("POST users")},
+			{ResourceName: "ezghcloud_database_user.app", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc/app", ImportStateVerify: true},
+			{ResourceName: "ezghcloud_database_logical_database.shop", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc/shop", ImportStateVerify: true},
+			{PreConfig: func() {
+				f.mu.Lock()
+				f.objects["users/handmade"] = map[string]any{"database": "dbi_123456789abc", "name": "handmade", "managed": false, "preset": nil, "logicalDatabase": nil, "secret": nil, "status": nil, "observedAt": "2026-11-03T10:00:00.000Z", "createdAt": nil}
+				f.mu.Unlock()
+			}, ResourceName: "ezghcloud_database_user.app", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc/handmade", ExpectError: regexp.MustCompile(`Only users created through EZGH can be imported`)},
+			{Config: config("admin"), ExpectError: regexp.MustCompile(`readOnly, readWrite or owner`)},
 		}})
 }
