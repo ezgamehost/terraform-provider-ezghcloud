@@ -27,7 +27,7 @@ A logical database inside a database, such as an app's own database. Destroying 
 - `failure_message` (String) Why the logical database's last operation failed; null when it didn't.
 - `id` (String) database_id/name.
 - `organization_id` (String) Organization managed by the configured provider.
-- `status` (String) What the logical database is doing: creating, available, missing (absent from the engine, for example dropped in SQL), failed, and others while it changes.
+- `status` (String) What the logical database is doing: creating, available, missing (absent from the engine, for example dropped in SQL; the next apply makes it again), failed (the next apply replaces it), and others while it changes.
 
 ## Import
 

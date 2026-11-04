@@ -46,7 +46,7 @@ func childAttributes(noun string) map[string]schema.Attribute {
 		"project_id":      schema.StringAttribute{Required: true, Description: "Project of the database. Changing it replaces the " + noun + ".", PlanModifiers: replace},
 		"database_id":     schema.StringAttribute{Required: true, Description: "Database (dbi_) it lives in. Changing it replaces the " + noun + ".", PlanModifiers: replace},
 		// Planned as available when it reads missing, so the apply brings it back.
-		"status": schema.StringAttribute{Computed: true, Description: "What the " + noun + " is doing: creating, available, missing (absent from the engine, for example dropped in SQL), failed, and others while it changes."},
+		"status": schema.StringAttribute{Computed: true, Description: "What the " + noun + " is doing: creating, available, missing (absent from the engine, for example dropped in SQL; the next apply makes it again), failed (the next apply replaces it), and others while it changes."},
 		// No plan modifier: ModifyPlan plans them null on an update, since every operation that succeeds clears them.
 		"failure_code":    schema.StringAttribute{Computed: true, Description: "Why the " + noun + "'s last operation failed, as a code; null when it didn't."},
 		"failure_message": schema.StringAttribute{Computed: true, Description: "Why the " + noun + "'s last operation failed; null when it didn't."},
@@ -119,17 +119,26 @@ func readState(ctx context.Context, c *client.Client, f *childFields, collection
 	return v, v.Managed && status != "deleting" && status != "deleted"
 }
 
-// planMissing plans status available for a missing object, so the plan shows an in-place update and
-// the apply recreates it (DU4: only the next change made through EZGH touches it again). The
-// recreate can change each of unknown (a user's Secret, if the customer deleted it). Any update
-// plans the failure null: each one runs an operation, and one that succeeds clears it.
-func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse, unknown ...string) {
+// planMissing plans the fix for an object that isn't what EZGH made, the API's next change (DU4):
+//   - missing (or recreate, a user whose drop the engine refused and so has no Secret): status is
+//     planned available, an in-place update that makes it again. That can change each of unknown
+//     (a user's Secret, if the customer deleted it).
+//   - failed: a replacement. The API deletes a failed row at once, and the create runs again,
+//     showing the API's refusal if there is one.
+//
+// Any update plans the failure null: each one runs an operation, and one that succeeds clears it.
+func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse, recreate bool, unknown ...string) {
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() || len(resp.RequiresReplace) > 0 {
 		return
 	}
 	var status types.String
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("status"), &status)...)
-	if status.ValueString() == "missing" {
+	switch {
+	case status.ValueString() == "failed":
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("status"), types.StringUnknown())...)
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("status"))
+		return
+	case status.ValueString() == "missing" || recreate:
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("status"), "available")...)
 		for _, name := range unknown {
 			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(name), types.StringUnknown())...)
@@ -201,7 +210,7 @@ func (r *logicalDatabaseResource) Configure(_ context.Context, req resource.Conf
 	configure(req.ProviderData, &resp.Diagnostics, &r.client)
 }
 func (r *logicalDatabaseResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	planMissing(ctx, req, resp)
+	planMissing(ctx, req, resp, false)
 }
 func (r *logicalDatabaseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var m childFields

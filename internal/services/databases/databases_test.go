@@ -387,3 +387,18 @@ func TestRefusedUserCreateSavesNothing(t *testing.T) {
 		t.Fatalf("%v %v", resp.Diagnostics, resp.State.Raw)
 	}
 }
+
+// A failed logical database plans a replacement: the API deletes a failed row at once.
+func TestFailedLogicalDatabasePlansReplace(t *testing.T) {
+	ctx := context.Background()
+	r := &logicalDatabaseResource{}
+	m := childFields{ID: types.StringValue("dbi_123456789abc/shop"), OrganizationID: types.StringValue("org_test"), ProjectID: types.StringValue("prj_test"), DatabaseID: types.StringValue("dbi_123456789abc"), Name: types.StringValue("shop"), Status: types.StringValue("failed"), FailureCode: types.StringValue("already_exists"), FailureMessage: types.StringValue("taken")}
+	s := asState(t, r, &m)
+	resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: s, Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}, &resp)
+	var status types.String
+	resp.Plan.GetAttribute(ctx, path.Root("status"), &status)
+	if resp.Diagnostics.HasError() || len(resp.RequiresReplace) != 1 || !status.IsUnknown() {
+		t.Fatalf("%v %v %v", resp.Diagnostics, resp.RequiresReplace, status)
+	}
+}

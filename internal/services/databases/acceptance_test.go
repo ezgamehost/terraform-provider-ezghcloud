@@ -424,21 +424,39 @@ resource "ezghcloud_database_user" "app" {
 				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "preset", "readWrite"),
 				calls("POST users/app/rotate-password", "PATCH users/app", "PATCH users/app"))},
 			{Config: config("readOnly"), Check: calls("PATCH users/app")},
-			// A drop the engine refused: the user stays available, with no Secret and the reason. A preset
-			// change then plans the failure null, and the PATCH clears it.
+			// A drop the engine refused: the user stays available, with no Secret and the reason. Refresh
+			// shows it, and the plan rotates it in place for a new Secret.
 			{PreConfig: func() {
 				set("users/app", "failure", map[string]any{"code": "user_is_definer", "message": "The user is a view's or routine's definer"})()
 				set("users/app", "secret", nil)()
-			}, Config: config("readOnly"), Check: resource.ComposeAggregateTestCheckFunc(
+			}, RefreshState: true, ExpectNonEmptyPlan: true, Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "failure_code", "user_is_definer"),
 				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "failure_message", "The user is a view's or routine's definer"),
 				resource.TestCheckNoResourceAttr("ezghcloud_database_user.app", "secret_id"),
 				resource.TestCheckNoResourceAttr("ezghcloud_database_logical_database.shop", "failure_code"))},
-			{Config: config("readWrite"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+			{PreConfig: func() { f.mu.Lock(); f.calls = nil; f.mu.Unlock() }, Config: config("readOnly"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+				plancheck.ExpectResourceAction("ezghcloud_database_user.app", plancheck.ResourceActionUpdate),
+				plancheck.ExpectUnknownValue("ezghcloud_database_user.app", tfjsonpath.New("secret_id")),
 				plancheck.ExpectKnownValue("ezghcloud_database_user.app", tfjsonpath.New("failure_code"), knownvalue.Null())}},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ezghcloud_database_user.app", "secret_id", "sec_333333333333"),
+					resource.TestCheckNoResourceAttr("ezghcloud_database_user.app", "failure_code"),
+					calls("POST users/app/rotate-password"))},
+			// Any update plans the failure null, and the operation clears it.
+			{PreConfig: func() { set("users/app", "failure", map[string]any{"code": "x", "message": "y"})() },
+				Config: config("readWrite"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectKnownValue("ezghcloud_database_user.app", tfjsonpath.New("failure_code"), knownvalue.Null())}},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckNoResourceAttr("ezghcloud_database_user.app", "failure_code"),
 					calls("PATCH users/app"))},
+			// A failed user is replaced: the API deletes the failed row, and the create runs again.
+			{PreConfig: func() {
+				set("users/app", "status", "failed")()
+				set("users/app", "failure", map[string]any{"code": "already_exists", "message": "The database already has a user with this name"})()
+			}, Config: config("readWrite"), ConfigPlanChecks: action(plancheck.ResourceActionDestroyBeforeCreate, "ezghcloud_database_user.app"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ezghcloud_database_user.app", "status", "available"),
+					calls("DELETE users/app", "POST users"))},
 			// A rotate needs its logical database available: the API's refusal is shown as it is.
 			{PreConfig: func() { set("users/app", "status", "missing")(); set("logical-databases/shop", "status", "creating")() },
 				Config: config("readWrite"), ExpectError: regexp.MustCompile(`The logical database shop is creating`)},

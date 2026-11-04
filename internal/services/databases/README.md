@@ -26,7 +26,9 @@ resource in state.
 | User `preset` | One `PATCH` in place, so the user and its password stay |
 | User `secret_id` | The Secret holding `username`, `password`, `host`, `port`, `database`, `engine` and `uri`. State never holds the password, and no attribute is sensitive |
 | Logical database and user `status` `missing` | Absent from the engine's latest report (dropped in SQL). The plan shows `status` going to `available`, an in-place update: a user's rotates its password, which creates it again with its preset; a logical database's creates it again. Right after an operation succeeds, `missing` reads as `available`, since the report can trail it |
-| Logical database and user `failure_code`, `failure_message` | The API's `failure`: why a create failed, or why the engine refused a user's drop (that user stays `available` with `secret_id` null until it's rotated). Null otherwise. An update plans them null, since every operation that succeeds clears them |
+| Logical database and user `failure_code`, `failure_message` | The API's `failure`: why a create failed, or why the engine refused a user's drop. Null otherwise. An update plans them null, since every operation that succeeds clears them |
+| Logical database and user `status` `failed` | A create that failed (a name made in SQL meanwhile, say). The plan replaces it: the API deletes a failed row at once, and the create runs again, showing the API's refusal if there is one |
+| User with `secret_id` null and a `failure_code` | A drop the engine refused (the user is a view's or routine's definer): it stays `available` with its preset and no Secret. The plan is an in-place update with `secret_id` unknown, which rotates it for a new Secret. A destroy retries the drop |
 | Logical database and user read | A `404`, a row that's `deleting`, or a name made only in SQL removes it from state |
 | Logical database and user import | `organization_id/project_id/dbi_…/name`. A name made in SQL is refused: only objects created through EZGH can be imported |
 

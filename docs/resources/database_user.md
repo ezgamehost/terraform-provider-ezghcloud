@@ -29,8 +29,8 @@ A user of a database with one preset on one logical database. Its password is ge
 - `failure_message` (String) Why the user's last operation failed; null when it didn't.
 - `id` (String) database_id/name.
 - `organization_id` (String) Organization managed by the configured provider.
-- `secret_id` (String) The Secret (sec_) holding the user's username, password, host, port, database, engine and connection uri. Terraform state never holds the password.
-- `status` (String) What the user is doing: creating, available, missing (absent from the engine, for example dropped in SQL), failed, and others while it changes.
+- `secret_id` (String) The Secret (sec_) holding the user's username, password, host, port, database, engine and connection uri. Null after a drop the engine refused, until the next apply rotates the user for a new one. Terraform state never holds the password.
+- `status` (String) What the user is doing: creating, available, missing (absent from the engine, for example dropped in SQL; the next apply makes it again), failed (the next apply replaces it), and others while it changes.
 
 ## Import
 

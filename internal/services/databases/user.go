@@ -32,7 +32,7 @@ func (*userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *r
 	a["name"] = schema.StringAttribute{Required: true, Description: "Username: a lowercase letter, then up to 31 lowercase letters, digits and underscores. Changing it replaces the user.", PlanModifiers: replace}
 	a["logical_database"] = schema.StringAttribute{Required: true, Description: "The logical database the preset grants access to. Changing it replaces the user.", PlanModifiers: replace}
 	a["preset"] = schema.StringAttribute{Required: true, Description: "readOnly, readWrite or owner. Changes in place."}
-	a["secret_id"] = schema.StringAttribute{Computed: true, Description: "The Secret (sec_) holding the user's username, password, host, port, database, engine and connection uri. Terraform state never holds the password.", PlanModifiers: keepString}
+	a["secret_id"] = schema.StringAttribute{Computed: true, Description: "The Secret (sec_) holding the user's username, password, host, port, database, engine and connection uri. Null after a drop the engine refused, until the next apply rotates the user for a new one. Terraform state never holds the password.", PlanModifiers: keepString}
 	resp.Schema = schema.Schema{Description: "A user of a database with one preset on one logical database. Its password is generated and kept in a Secret in the project. Destroying it deletes the user and its Secret; tables it created stay.", Attributes: a}
 }
 func (r *userResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -46,7 +46,17 @@ func (r *userResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 			resp.Diagnostics.AddAttributeError(path.Root("preset"), "Invalid preset", "Use readOnly, readWrite or owner.")
 		}
 	}
-	planMissing(ctx, req, resp, "secret_id")
+	var state userModel
+	if !req.State.Raw.IsNull() {
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	}
+	planMissing(ctx, req, resp, state.secretless(), "secret_id")
+}
+
+// secretless is a user whose drop the engine refused: it's still there with its preset, and its
+// Secret is gone until a rotation writes a new one.
+func (m *userModel) secretless() bool {
+	return m.Status.ValueString() == "available" && m.SecretID.IsNull() && known(m.FailureCode)
 }
 func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var m userModel
@@ -86,7 +96,7 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 // Update brings a missing user back by rotating its password (which creates it again with its
-// preset), then PATCHes a changed preset.
+// preset), or gives a secretless one a new Secret the same way, then PATCHes a changed preset.
 func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var m, old userModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
@@ -94,7 +104,7 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() || !validateOrg(m.OrganizationID, r.client, &resp.Diagnostics) {
 		return
 	}
-	if old.Status.ValueString() == "missing" {
+	if old.Status.ValueString() == "missing" || old.secretless() {
 		if err := m.send(ctx, r.client, "POST", m.path(r.client, "users", "rotate-password"), nil, nil); err != nil {
 			apiError(&resp.Diagnostics, err)
 			return
