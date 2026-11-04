@@ -25,6 +25,8 @@ A user of a database with one preset on one logical database. Its password is ge
 
 ### Read-Only
 
+- `failure_code` (String) Why the user's last operation failed, as a code; null when it didn't.
+- `failure_message` (String) Why the user's last operation failed; null when it didn't.
 - `id` (String) database_id/name.
 - `organization_id` (String) Organization managed by the configured provider.
 - `secret_id` (String) The Secret (sec_) holding the user's username, password, host, port, database, engine and connection uri. Terraform state never holds the password.

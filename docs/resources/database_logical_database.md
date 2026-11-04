@@ -23,6 +23,8 @@ A logical database inside a database, such as an app's own database. Destroying 
 
 ### Read-Only
 
+- `failure_code` (String) Why the logical database's last operation failed, as a code; null when it didn't.
+- `failure_message` (String) Why the logical database's last operation failed; null when it didn't.
 - `id` (String) database_id/name.
 - `organization_id` (String) Organization managed by the configured provider.
 - `status` (String) What the logical database is doing: creating, available, missing (absent from the engine, for example dropped in SQL), failed, and others while it changes.

@@ -26,11 +26,16 @@ resource in state.
 | User `preset` | One `PATCH` in place, so the user and its password stay |
 | User `secret_id` | The Secret holding `username`, `password`, `host`, `port`, `database`, `engine` and `uri`. State never holds the password, and no attribute is sensitive |
 | Logical database and user `status` `missing` | Absent from the engine's latest report (dropped in SQL). The plan shows `status` going to `available`, an in-place update: a user's rotates its password, which creates it again with its preset; a logical database's creates it again. Right after an operation succeeds, `missing` reads as `available`, since the report can trail it |
+| Logical database and user `failure_code`, `failure_message` | The API's `failure`: why a create failed, or why the engine refused a user's drop (that user stays `available` with `secret_id` null until it's rotated). Null otherwise. An update plans them null, since every operation that succeeds clears them |
 | Logical database and user read | A `404`, a row that's `deleting`, or a name made only in SQL removes it from state |
 | Logical database and user import | `organization_id/project_id/dbi_…/name`. A name made in SQL is refused: only objects created through EZGH can be imported |
 
-These were written against the build brief's public shapes (`2026-11-03-databases-users.md` in
-service-template), before databases-api served the routes.
+Checked against databases-api's OpenAPI overlay (databases-stack `dc60949`) on 2026-11-03: the
+routes, request bodies (`LogicalDatabaseCreate`, `DatabaseUserCreate`, `DatabaseUserUpdate`; rotate
+takes no body), the `LogicalDatabase` and `DatabaseUser` fields and their nullability, and `202` with
+an operation and `Location` on every change. A create of a managed logical database that reads
+`missing` is accepted and makes it again; refusals (`409 already_exists`, `user_failed`,
+`database_busy`, `logical_database_not_available`, `quota_exceeded`, …) show the API's message.
 
 API errors add databases-api's message and its extras (`restorableRanges`, `reasons`, `issues`); an
 `access_denied` names only the permission, as elsewhere in the provider.

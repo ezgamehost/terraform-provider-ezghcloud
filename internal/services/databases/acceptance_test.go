@@ -131,7 +131,10 @@ func (f *fixture) serve(t *testing.T) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-// child serves logical databases and users, keyed by "users/<name>" and "logical-databases/<name>".
+// child serves logical databases and users, keyed by "users/<name>" and "logical-databases/<name>",
+// with databases-api's rules: a create of a managed name that's missing makes it again, any other
+// name it holds is already_exists; a rotate needs its logical database available; every operation
+// that succeeds clears failure.
 func (f *fixture) child(w http.ResponseWriter, method string, parts []string, body map[string]any, send func(any), accepted func(string, string)) {
 	f.calls = append(f.calls, method+" "+strings.Join(parts[7:], "/"))
 	collection, name := parts[7], ""
@@ -146,10 +149,10 @@ func (f *fixture) child(w http.ResponseWriter, method string, parts []string, bo
 	case method == "POST" && len(parts) == 8:
 		if obj != nil && obj["status"] != "missing" {
 			w.WriteHeader(409)
-			send(map[string]any{"error": map[string]any{"code": "already_exists", "message": "That name is taken"}})
+			send(map[string]any{"error": map[string]any{"code": "already_exists", "message": "The database already has a " + strings.TrimSuffix(strings.ReplaceAll(collection, "-", " "), "s") + " with this name"}})
 			return
 		}
-		obj = map[string]any{"database": parts[6], "name": name, "managed": true, "status": "available", "observedAt": "2026-11-03T10:00:00.000Z", "createdAt": "2026-11-03T10:00:00.000Z"}
+		obj = map[string]any{"database": parts[6], "name": name, "managed": true, "status": "available", "failure": nil, "observedAt": "2026-11-03T10:00:00.000Z", "createdAt": "2026-11-03T10:00:00.000Z"}
 		if collection == "users" {
 			obj["preset"], obj["logicalDatabase"], obj["secret"] = body["preset"], body["logicalDatabase"], "sec_222222222222"
 		}
@@ -165,10 +168,15 @@ func (f *fixture) child(w http.ResponseWriter, method string, parts []string, bo
 		w.WriteHeader(500)
 		send(map[string]any{"error": map[string]any{"code": "internal", "message": "PATCH failed"}})
 	case method == "PATCH":
-		obj["preset"] = body["preset"]
+		obj["preset"], obj["failure"] = body["preset"], nil
 		accepted("modify-"+name, parts[6]+"/"+key)
 	case method == "POST" && parts[len(parts)-1] == "rotate-password":
-		obj["status"], obj["secret"] = "available", "sec_333333333333" // as when the customer had deleted the Secret
+		if ld, _ := f.objects["logical-databases/"+obj["logicalDatabase"].(string)]; ld != nil && ld["status"] != "available" {
+			w.WriteHeader(409)
+			send(map[string]any{"error": map[string]any{"code": "logical_database_not_available", "message": "The logical database " + obj["logicalDatabase"].(string) + " is " + ld["status"].(string)}})
+			return
+		}
+		obj["status"], obj["secret"], obj["failure"] = "available", "sec_333333333333", nil // as when the customer had deleted the Secret
 		accepted("rotate-"+name, parts[6]+"/"+key)
 	case method == "DELETE":
 		delete(f.objects, key)
@@ -416,8 +424,41 @@ resource "ezghcloud_database_user" "app" {
 				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "preset", "readWrite"),
 				calls("POST users/app/rotate-password", "PATCH users/app", "PATCH users/app"))},
 			{Config: config("readOnly"), Check: calls("PATCH users/app")},
+			// A drop the engine refused: the user stays available, with no Secret and the reason. A preset
+			// change then plans the failure null, and the PATCH clears it.
+			{PreConfig: func() {
+				set("users/app", "failure", map[string]any{"code": "user_is_definer", "message": "The user is a view's or routine's definer"})()
+				set("users/app", "secret", nil)()
+			}, Config: config("readOnly"), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "failure_code", "user_is_definer"),
+				resource.TestCheckResourceAttr("ezghcloud_database_user.app", "failure_message", "The user is a view's or routine's definer"),
+				resource.TestCheckNoResourceAttr("ezghcloud_database_user.app", "secret_id"),
+				resource.TestCheckNoResourceAttr("ezghcloud_database_logical_database.shop", "failure_code"))},
+			{Config: config("readWrite"), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+				plancheck.ExpectKnownValue("ezghcloud_database_user.app", tfjsonpath.New("failure_code"), knownvalue.Null())}},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("ezghcloud_database_user.app", "failure_code"),
+					calls("PATCH users/app"))},
+			// A rotate needs its logical database available: the API's refusal is shown as it is.
+			{PreConfig: func() { set("users/app", "status", "missing")(); set("logical-databases/shop", "status", "creating")() },
+				Config: config("readWrite"), ExpectError: regexp.MustCompile(`The logical database shop is creating`)},
+			{PreConfig: func() {
+				set("logical-databases/shop", "status", "available")()
+				f.mu.Lock()
+				f.calls = nil
+				f.mu.Unlock()
+			},
+				Config: config("readWrite"), Check: calls("POST users/app/rotate-password")},
+			// A name the database already holds is refused with the API's message, and nothing is saved.
+			{Config: config("readWrite") + `
+resource "ezghcloud_database_logical_database" "again" {
+ project_id = "prj_test"
+ database_id = "dbi_123456789abc"
+ name = "shop"
+}
+`, ExpectError: regexp.MustCompile(`The database already has a logical database with this name`)},
 			// A 404 removes it from state, so the plan creates it.
-			{PreConfig: func() { f.mu.Lock(); delete(f.objects, "users/app"); f.mu.Unlock() },
+			{PreConfig: func() { f.mu.Lock(); delete(f.objects, "users/app"); f.calls = nil; f.mu.Unlock() },
 				Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionCreate, "ezghcloud_database_user.app"), Check: calls("POST users")},
 			{ResourceName: "ezghcloud_database_user.app", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc/app", ImportStateVerify: true},
 			{ResourceName: "ezghcloud_database_logical_database.shop", ImportState: true, ImportStateId: "org_test/prj_test/dbi_123456789abc/shop", ImportStateVerify: true},

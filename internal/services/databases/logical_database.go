@@ -26,12 +26,15 @@ type childFields struct {
 	DatabaseID     types.String `tfsdk:"database_id"`
 	Name           types.String `tfsdk:"name"`
 	Status         types.String `tfsdk:"status"`
+	FailureCode    types.String `tfsdk:"failure_code"`
+	FailureMessage types.String `tfsdk:"failure_message"`
 }
 type childView struct {
 	Database, Name                  string
 	Managed                         bool
 	Status                          *string
 	Preset, LogicalDatabase, Secret *string
+	Failure                         *struct{ Code, Message string }
 }
 
 var replace = []planmodifier.String{stringplanmodifier.RequiresReplace()}
@@ -44,6 +47,9 @@ func childAttributes(noun string) map[string]schema.Attribute {
 		"database_id":     schema.StringAttribute{Required: true, Description: "Database (dbi_) it lives in. Changing it replaces the " + noun + ".", PlanModifiers: replace},
 		// Planned as available when it reads missing, so the apply brings it back.
 		"status": schema.StringAttribute{Computed: true, Description: "What the " + noun + " is doing: creating, available, missing (absent from the engine, for example dropped in SQL), failed, and others while it changes."},
+		// No plan modifier: ModifyPlan plans them null on an update, since every operation that succeeds clears them.
+		"failure_code":    schema.StringAttribute{Computed: true, Description: "Why the " + noun + "'s last operation failed, as a code; null when it didn't."},
+		"failure_message": schema.StringAttribute{Computed: true, Description: "Why the " + noun + "'s last operation failed; null when it didn't."},
 	}
 }
 
@@ -68,6 +74,10 @@ func (f *childFields) fill(v childView, org string, afterOperation bool) {
 	f.ID = types.StringValue(f.DatabaseID.ValueString() + "/" + f.Name.ValueString())
 	f.OrganizationID = types.StringValue(org)
 	f.Status = types.StringPointerValue(v.Status)
+	f.FailureCode, f.FailureMessage = types.StringNull(), types.StringNull()
+	if v.Failure != nil {
+		f.FailureCode, f.FailureMessage = types.StringValue(v.Failure.Code), types.StringValue(v.Failure.Message)
+	}
 	if afterOperation && f.Status.ValueString() == "missing" {
 		f.Status = types.StringValue("available")
 	}
@@ -111,7 +121,8 @@ func readState(ctx context.Context, c *client.Client, f *childFields, collection
 
 // planMissing plans status available for a missing object, so the plan shows an in-place update and
 // the apply recreates it (DU4: only the next change made through EZGH touches it again). The
-// recreate can change each of unknown (a user's Secret, if the customer deleted it).
+// recreate can change each of unknown (a user's Secret, if the customer deleted it). Any update
+// plans the failure null: each one runs an operation, and one that succeeds clears it.
 func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse, unknown ...string) {
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() || len(resp.RequiresReplace) > 0 {
 		return
@@ -122,6 +133,11 @@ func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *reso
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("status"), "available")...)
 		for _, name := range unknown {
 			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(name), types.StringUnknown())...)
+		}
+	}
+	if !resp.Plan.Raw.Equal(req.State.Raw) {
+		for _, name := range []string{"failure_code", "failure_message"} {
+			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(name), types.StringNull())...)
 		}
 	}
 }
