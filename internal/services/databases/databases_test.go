@@ -333,3 +333,21 @@ func TestMissingUserPlansAvailable(t *testing.T) {
 		t.Fatalf("%v %v", resp.Diagnostics, status)
 	}
 }
+
+// A create the API refuses (a name made in SQL) saves nothing, so there is nothing to destroy.
+func TestRefusedUserCreateSavesNothing(t *testing.T) {
+	ctx := context.Background()
+	c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(409)
+		_, _ = w.Write([]byte(`{"error":{"code":"already_exists","message":"A user named app exists"}}`))
+	})
+	r := &userResource{client: c}
+	m := userModel{LogicalDatabase: types.StringValue("shop"), Preset: types.StringValue("readWrite"), SecretID: types.StringUnknown()}
+	m.ID, m.OrganizationID, m.ProjectID, m.DatabaseID, m.Name, m.Status = types.StringUnknown(), types.StringUnknown(), types.StringValue("prj_test"), types.StringValue("dbi_123456789abc"), types.StringValue("app"), types.StringUnknown()
+	p := asState(t, r, &m)
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: p.Schema, Raw: tftypes.NewValue(p.Schema.Type().TerraformType(ctx), nil)}}
+	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: p.Schema, Raw: p.Raw}}, &resp)
+	if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "A user named app exists") || !resp.State.Raw.IsNull() {
+		t.Fatalf("%v %v", resp.Diagnostics, resp.State.Raw)
+	}
+}

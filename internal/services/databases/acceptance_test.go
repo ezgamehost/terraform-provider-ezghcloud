@@ -161,7 +161,7 @@ func (f *fixture) child(w http.ResponseWriter, method string, parts []string, bo
 		obj["preset"] = body["preset"]
 		accepted("modify-"+name, parts[6]+"/"+key)
 	case method == "POST" && parts[len(parts)-1] == "rotate-password":
-		obj["status"] = "available"
+		obj["status"], obj["secret"] = "available", "sec_333333333333" // as when the customer had deleted the Secret
 		accepted("rotate-"+name, parts[6]+"/"+key)
 	case method == "DELETE":
 		delete(f.objects, key)
@@ -391,6 +391,7 @@ resource "ezghcloud_database_user" "app" {
 				Config: config("readOnly"), ConfigPlanChecks: action(plancheck.ResourceActionUpdate, "ezghcloud_database_user.app", "ezghcloud_database_logical_database.shop"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ezghcloud_database_user.app", "status", "available"),
+					resource.TestCheckResourceAttr("ezghcloud_database_user.app", "secret_id", "sec_333333333333"),
 					resource.TestCheckResourceAttr("ezghcloud_database_logical_database.shop", "status", "available"),
 					calls("POST logical-databases", "POST users/app/rotate-password"))},
 			// A 404 removes it from state, so the plan creates it.

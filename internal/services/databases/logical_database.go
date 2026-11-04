@@ -73,13 +73,17 @@ func (f *childFields) fill(v childView, org string, afterOperation bool) {
 	}
 }
 
-// send makes one async call for the object and waits for its operation.
-func (f *childFields) send(ctx context.Context, c *client.Client, method, path string, body any) error {
+// send makes one async call for the object and waits for its operation. accepted, when set, runs
+// once the API has taken the call and before the wait; returning false stops there with an error.
+func (f *childFields) send(ctx context.Context, c *client.Client, method, path string, body any, accepted func() bool) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Hour) // defaultTimeout; these operations take seconds
 	defer cancel()
 	out, err := c.Do(ctx, service, method, path, body)
 	if err != nil {
 		return err
+	}
+	if accepted != nil && !accepted() {
+		return fmt.Errorf("%s was accepted but couldn't be saved to state; import it", f.Name.ValueString())
 	}
 	if err = waitResponse(ctx, c, out); err != nil {
 		return fmt.Errorf("%s, operation %s: %w", f.Name.ValueString(), operationID(out).ValueString(), err)
@@ -106,8 +110,9 @@ func readState(ctx context.Context, c *client.Client, f *childFields, collection
 }
 
 // planMissing plans status available for a missing object, so the plan shows an in-place update and
-// the apply recreates it (DU4: only the next change made through EZGH touches it again).
-func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+// the apply recreates it (DU4: only the next change made through EZGH touches it again). The
+// recreate can change each of unknown (a user's Secret, if the customer deleted it).
+func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse, unknown ...string) {
 	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
 		return
 	}
@@ -115,10 +120,13 @@ func planMissing(ctx context.Context, req resource.ModifyPlanRequest, resp *reso
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("status"), &status)...)
 	if status.ValueString() == "missing" {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("status"), "available")...)
+		for _, name := range unknown {
+			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root(name), types.StringUnknown())...)
+		}
 	}
 }
 func deleteChild(ctx context.Context, c *client.Client, f *childFields, collection string, diags *diag.Diagnostics) {
-	if err := f.send(ctx, c, "DELETE", f.path(c, collection), nil); err != nil {
+	if err := f.send(ctx, c, "DELETE", f.path(c, collection), nil, nil); err != nil {
 		if missing, e := confirmedMissing(ctx, c, f.ProjectID.ValueString(), err); !missing {
 			apiError(diags, e)
 		}
@@ -180,11 +188,10 @@ func (r *logicalDatabaseResource) Create(ctx context.Context, req resource.Creat
 }
 func (r *logicalDatabaseResource) create(ctx context.Context, m *childFields, state *tfsdk.State, diags *diag.Diagnostics) {
 	m.ID, m.OrganizationID, m.Status = types.StringValue(m.DatabaseID.ValueString()+"/"+m.Name.ValueString()), types.StringValue(r.client.OrganizationID), types.StringValue("creating")
-	if diags.Append(setKnown(ctx, state, m)...); diags.HasError() {
-		return
-	}
 	p := childPath(r.client, m.ProjectID.ValueString(), m.DatabaseID.ValueString(), "logical-databases")
-	if err := m.send(ctx, r.client, "POST", p, map[string]any{"name": m.Name.ValueString()}); err != nil {
+	// Saved only once the API took it: a refused create (already_exists) leaves nothing to destroy.
+	saved := func() bool { diags.Append(setKnown(ctx, state, m)...); return !diags.HasError() }
+	if err := m.send(ctx, r.client, "POST", p, map[string]any{"name": m.Name.ValueString()}, saved); err != nil {
 		apiError(diags, err)
 		return
 	}

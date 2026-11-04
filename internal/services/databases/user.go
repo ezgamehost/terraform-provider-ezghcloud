@@ -46,7 +46,7 @@ func (r *userResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 			resp.Diagnostics.AddAttributeError(path.Root("preset"), "Invalid preset", "Use readOnly, readWrite or owner.")
 		}
 	}
-	planMissing(ctx, req, resp)
+	planMissing(ctx, req, resp, "secret_id")
 }
 func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var m userModel
@@ -55,12 +55,14 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 	m.ID, m.OrganizationID, m.Status = types.StringValue(m.DatabaseID.ValueString()+"/"+m.Name.ValueString()), types.StringValue(r.client.OrganizationID), types.StringValue("creating")
-	if resp.Diagnostics.Append(setKnown(ctx, &resp.State, &m)...); resp.Diagnostics.HasError() {
-		return
-	}
 	p := childPath(r.client, m.ProjectID.ValueString(), m.DatabaseID.ValueString(), "users")
 	body := map[string]any{"name": m.Name.ValueString(), "preset": m.Preset.ValueString(), "logicalDatabase": m.LogicalDatabase.ValueString()}
-	if err := m.send(ctx, r.client, "POST", p, body); err != nil {
+	// Saved only once the API took it: a refused create (already_exists) leaves nothing to destroy.
+	saved := func() bool {
+		resp.Diagnostics.Append(setKnown(ctx, &resp.State, &m)...)
+		return !resp.Diagnostics.HasError()
+	}
+	if err := m.send(ctx, r.client, "POST", p, body, saved); err != nil {
 		apiError(&resp.Diagnostics, err)
 		return
 	}
@@ -93,13 +95,13 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 	if old.Status.ValueString() == "missing" {
-		if err := m.send(ctx, r.client, "POST", m.path(r.client, "users", "rotate-password"), nil); err != nil {
+		if err := m.send(ctx, r.client, "POST", m.path(r.client, "users", "rotate-password"), nil, nil); err != nil {
 			apiError(&resp.Diagnostics, err)
 			return
 		}
 	}
 	if !m.Preset.Equal(old.Preset) {
-		if err := m.send(ctx, r.client, "PATCH", m.path(r.client, "users"), map[string]any{"preset": m.Preset.ValueString()}); err != nil {
+		if err := m.send(ctx, r.client, "PATCH", m.path(r.client, "users"), map[string]any{"preset": m.Preset.ValueString()}, nil); err != nil {
 			apiError(&resp.Diagnostics, err)
 			return
 		}
