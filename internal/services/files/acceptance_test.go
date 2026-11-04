@@ -299,6 +299,8 @@ resource "ezghcloud_access_point" "root" {
 	r := "ezghcloud_access_point.wp"
 	replaced := action(r, plancheck.ResourceActionDestroyBeforeCreate)
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, CheckDestroy: gone(f), Steps: []resource.TestStep{
+		{Config: strings.Replace(config("wp-content", "/wordpress/wp-content", 33), "gid = 33 }", "gid = 33, secondary_gids = [4] }", 1),
+			ExpectError: regexp.MustCompile(`Secondary groups aren't supported`)},
 		{Config: config("wp-content", "/wordpress/wp-content", 33), Check: resource.ComposeAggregateTestCheckFunc(
 			resource.TestCheckResourceAttrPair(r, "file_system_id", "ezghcloud_file_system.shared", "id"),
 			resource.TestCheckResourceAttr(r, "root_directory.path", "/wordpress/wp-content"),

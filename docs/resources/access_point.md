@@ -46,7 +46,7 @@ resource "ezghcloud_access_point" "wp_content" {
 ### Optional
 
 - `description` (String) Optional description; null clears it.
-- `posix_user` (Attributes) User and groups every request through the access point runs as, whatever the client sends. Without it, the file system's root_squash applies. Any change replaces the access point. (see [below for nested schema](#nestedatt--posix_user))
+- `posix_user` (Attributes) User and group every request through the access point runs as, whatever the client sends. Without it, the file system's root_squash applies. Any change replaces the access point. (see [below for nested schema](#nestedatt--posix_user))
 - `root_directory` (Attributes) Folder clients see as the root when they mount the access point. Defaults to the file system's root. Any change replaces the access point. (see [below for nested schema](#nestedatt--root_directory))
 - `tags` (Map of String) Resource tags.
 
@@ -67,7 +67,7 @@ Required:
 
 Optional:
 
-- `secondary_gids` (List of Number) Up to 16 more group IDs.
+- `secondary_gids` (List of Number) Not supported: leave it unset or []. Always [] in state.
 
 
 <a id="nestedatt--root_directory"></a>

@@ -5,6 +5,7 @@ import (
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
@@ -79,17 +80,28 @@ func (*accessPointResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			}},
 		}}
 	a["posix_user"] = schema.SingleNestedAttribute{Optional: true, PlanModifiers: replaceObject,
-		Description: "User and groups every request through the access point runs as, whatever the client sends. Without it, the file system's root_squash applies. Any change replaces the access point.",
+		Description: "User and group every request through the access point runs as, whatever the client sends. Without it, the file system's root_squash applies. Any change replaces the access point.",
 		Attributes: map[string]schema.Attribute{
 			"uid": schema.Int64Attribute{Required: true, Description: "User ID."},
 			"gid": schema.Int64Attribute{Required: true, Description: "Group ID."},
 			"secondary_gids": schema.ListAttribute{Optional: true, Computed: true, ElementType: types.Int64Type, Default: listdefault.StaticValue(types.ListValueMust(types.Int64Type, []attr.Value{})),
-				Description: "Up to 16 more group IDs."},
+				Description: "Not supported: leave it unset or []. Always [] in state."},
 		}}
 	resp.Schema = schema.Schema{Description: "An application's entry into a file system: a folder as its root and, optionally, a fixed POSIX user. Destroying it removes the entry, never the files.", Attributes: a}
 }
 func (r *accessPointResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	configure(req.ProviderData, &resp.Diagnostics, &r.client)
+}
+
+// ValidateConfig refuses secondary groups, which files-api refuses too: the NFS server has no setting
+// for them.
+func (*accessPointResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var gids types.List
+	at := path.Root("posix_user").AtName("secondary_gids")
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, at, &gids)...)
+	if !resp.Diagnostics.HasError() && !gids.IsNull() && !gids.IsUnknown() && len(gids.Elements()) > 0 {
+		resp.Diagnostics.AddAttributeError(at, "Secondary groups aren't supported", "Leave posix_user.secondary_gids unset or [].")
+	}
 }
 
 func (r *accessPointResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -110,9 +122,7 @@ func (r *accessPointResource) Create(ctx context.Context, req resource.CreateReq
 		body["rootDirectory"] = root
 	}
 	if pu := m.PosixUser; pu != nil {
-		gids := []int64{}
-		resp.Diagnostics.Append(pu.SecondaryGIDs.ElementsAs(ctx, &gids, false)...)
-		body["posixUser"] = map[string]any{"uid": pu.UID.ValueInt64(), "gid": pu.GID.ValueInt64(), "secondaryGids": gids}
+		body["posixUser"] = map[string]any{"uid": pu.UID.ValueInt64(), "gid": pu.GID.ValueInt64()}
 	}
 	if resp.Diagnostics.HasError() || !create(ctx, r.client, "access-points", &m.common, &m, &resp.State, body, &resp.Diagnostics) {
 		return
