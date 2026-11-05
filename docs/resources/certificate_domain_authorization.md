@@ -28,7 +28,7 @@ resource "ezghcloud_certificate_domain_authorization" "example" {
 
 ### Optional
 
-- `dns_zone_id` (String) EZGH DNS zone (zon_) that receives the validation records. Removing it unlinks the zone and removes the records EZGH wrote.
+- `dns_zone_id` (String) EZGH DNS zone (zon_) that receives the validation records. Removing it unlinks the zone; the records EZGH wrote stay in it as your own.
 - `enabled` (Boolean) Whether certificates can be issued for the domain. Defaults to true.
 - `name` (String) Name, 1 to 100 characters. Defaults to the domain name.
 - `tags` (Map of String) Resource tags.

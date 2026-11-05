@@ -93,7 +93,7 @@ func (*authorizationResource) Schema(_ context.Context, _ resource.SchemaRequest
 		"name":        schema.StringAttribute{Optional: true, Computed: true, Description: "Name, 1 to 100 characters. Defaults to the domain name.", PlanModifiers: keep},
 		"enabled":     schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), Description: "Whether certificates can be issued for the domain. Defaults to true."},
 		"tags":        schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Resource tags."},
-		"dns_zone_id": schema.StringAttribute{Optional: true, Description: "EZGH DNS zone (zon_) that receives the validation records. Removing it unlinks the zone and removes the records EZGH wrote."},
+		"dns_zone_id": schema.StringAttribute{Optional: true, Description: "EZGH DNS zone (zon_) that receives the validation records. Removing it unlinks the zone; the records EZGH wrote stay in it as your own."},
 		"status":      schema.StringAttribute{Computed: true, Description: "pending until the validation records are seen, then verified."},
 		"dns_instructions": schema.ListNestedAttribute{Computed: true, Description: "The records that prove control of the domain.", NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 			"type":  schema.StringAttribute{Computed: true, Description: "Record type."},
@@ -123,7 +123,7 @@ func (r *authorizationResource) call(ctx context.Context, method, path string, b
 		err = out.Decode(&v)
 	}
 	if err == nil && out.StatusCode != wantStatus {
-		err = fmt.Errorf("the domain authorization already exists; import it with its ID (dau_) to manage it")
+		err = fmt.Errorf("the domain authorization already exists as %[1]s; import it to manage it: terraform import ezghcloud_certificate_domain_authorization.<name> %[1]s", v.Slug)
 	}
 	if err == nil && !strings.HasPrefix(v.Slug, "dau_") {
 		err = fmt.Errorf("response omitted the domain authorization identity")

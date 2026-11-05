@@ -36,6 +36,8 @@ type fixture struct {
 	// failIssuance ends the certificate create's operation failed with this message.
 	failIssuance string
 	opFailed     bool
+	// reused answers an authorization create 200: it found one already there.
+	reused bool
 	*httptest.Server
 }
 
@@ -72,6 +74,10 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			"tags": body["tags"], "dnsInstructions": []any{map[string]any{"type": "TXT", "name": "_acme_request_ezgh.example.com", "value": "ezgh-v1=t"}},
 			"dnsZoneId": nil, "managedDns": nil}
 		f.link(body)
+		if f.reused {
+			send(200, f.auth)
+			return
+		}
 		send(201, f.auth)
 	case strings.HasPrefix(p, org+"/domain-authorizations/") && f.auth != nil && (strings.HasSuffix(p, authSlug) || strings.HasSuffix(p, authUUID)):
 		switch r.Method {
@@ -170,6 +176,17 @@ func TestAccAuthorizationLinksAndUnlinksZone(t *testing.T) {
 	if f.auth != nil {
 		t.Fatal("authorization left behind")
 	}
+}
+
+// A create that finds the authorization already there (a first apply whose link DNS refused
+// keeps it) names the import that adopts it.
+func TestAccAuthorizationExistingNamesImport(t *testing.T) {
+	f := newFixture(t)
+	f.reused = true
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
+		{Config: f.provider() + fmt.Sprintf(authorization, `dns_zone_id = "zon_000000000001"`),
+			ExpectError: regexp.MustCompile(`terraform import\s+ezghcloud_certificate_domain_authorization.<name>\s+` + authSlug)},
+	}})
 }
 
 const chain = `
