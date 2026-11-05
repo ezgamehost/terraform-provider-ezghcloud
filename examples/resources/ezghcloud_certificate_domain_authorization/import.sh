@@ -1,0 +1,1 @@
+terraform import ezghcloud_certificate_domain_authorization.example dau_xxxxxxxxxxxx

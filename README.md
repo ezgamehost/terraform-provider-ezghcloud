@@ -7,7 +7,8 @@ there is no published Terraform Registry release yet.
 
 The provider covers projects, VPCs, subnets, firewalls, SSH keys,
 instances, volumes, databases with their backups, and file systems with their mount targets
-and access points, plus IAM bots, groups, policies, memberships, policy
+and access points, DNS zones and record sets, Web Certificates domain authorizations
+and certificates, plus IAM bots, groups, policies, memberships, policy
 attachments, API keys, invitations, and federation configuration, with import and
 lookup data sources where supported.
 

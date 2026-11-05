@@ -1,0 +1,1 @@
+terraform import ezghcloud_certificate.example prj_xxxxxxxxxxxx/crt_xxxxxxxxxxxx

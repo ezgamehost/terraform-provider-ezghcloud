@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/certificates"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/compute"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/databases"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/dns"
@@ -41,7 +42,7 @@ func (p *cloudProvider) Schema(_ context.Context, _ framework.SchemaRequest, res
 	resp.Schema = schema.Schema{Description: "Manage EZGH Cloud infrastructure and IAM through its public APIs.", Attributes: map[string]schema.Attribute{
 		"api_token":       schema.StringAttribute{Optional: true, Sensitive: true, Description: "Customer bearer credential. Defaults to EZGHCLOUD_API_TOKEN. The credential is never stored as a resource attribute."},
 		"organization_id": schema.StringAttribute{Optional: true, Description: "Organization identifier. Defaults to EZGHCLOUD_ORGANIZATION_ID. Use provider aliases for multiple organizations."},
-		"endpoints":       schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Optional API base URL overrides by service: orgs, compute, network, firewall, blockstore, images, databases, files, dns. Credentials are sent to these URLs; use trusted endpoints only. Defaults to public HTTPS APIs."},
+		"endpoints":       schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Optional API base URL overrides by service: orgs, compute, network, firewall, blockstore, images, databases, files, dns, certificates. Credentials are sent to these URLs; use trusted endpoints only. Defaults to public HTTPS APIs."},
 	}}
 }
 func (p *cloudProvider) Configure(ctx context.Context, req framework.ConfigureRequest, resp *framework.ConfigureResponse) {
@@ -96,6 +97,7 @@ func (p *cloudProvider) Resources(context.Context) []func() resource.Resource {
 	out = append(out, databases.Resources()...)
 	out = append(out, files.Resources()...)
 	out = append(out, dns.Resources()...)
+	out = append(out, certificates.Resources()...)
 	return append(out, compute.Resources()...)
 }
 func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSource {
