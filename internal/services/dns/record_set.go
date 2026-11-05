@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/validate"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -50,7 +52,7 @@ func (*recordSetResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		"id":         schema.StringAttribute{Computed: true, Description: "zone_id/name/TYPE.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"project_id": schema.StringAttribute{Required: true, Description: "Project that holds the zone. Changing it replaces the record set.", PlanModifiers: replace},
 		"zone_id":    schema.StringAttribute{Required: true, Description: "Zone ID (zon_). Changing it replaces the record set.", PlanModifiers: replace},
-		"name":       schema.StringAttribute{Required: true, Description: "Lowercase name relative to the zone, or @ for the zone itself. Changing it replaces the record set.", PlanModifiers: replace},
+		"name":       schema.StringAttribute{Required: true, Description: "Lowercase name relative to the zone, or @ for the zone itself. Changing it replaces the record set.", PlanModifiers: replace, Validators: []validator.String{validate.Name{Record: true}}},
 		"type":       schema.StringAttribute{Required: true, Description: "Record type, such as A, AAAA, CNAME or TXT. Changing it replaces the record set.", PlanModifiers: replace},
 		"ttl":        schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(300), Description: "Time to live in seconds. Defaults to 300."},
 		"values":     schema.SetAttribute{Required: true, ElementType: types.StringType, Description: "The record set's values."},
@@ -107,6 +109,18 @@ func (r *recordSetResource) change(ctx context.Context, m *recordSetModel, ch ma
 	return err
 }
 
+// serviceNames are the display names of the services that manage record sets.
+var serviceNames = map[string]string{"certificates": "Web Certificates"}
+
+// managedError refuses a record set another EZGH service owns: DNS refuses every change to it, so
+// Terraform must not hold it in state.
+func managedError(diags *diag.Diagnostics, name, typ, svc string) {
+	if n, ok := serviceNames[svc]; ok {
+		svc = n
+	}
+	diags.AddError("Record set is managed by "+svc, fmt.Sprintf("%s %s is managed by %s and can't be managed in Terraform. It is written and removed with the resource that owns it.", name, typ, svc))
+}
+
 // apply upserts the planned record set and reads it back into m. A create refuses to take over a
 // record set that is already there.
 func (r *recordSetResource) apply(ctx context.Context, m *recordSetModel, creating bool, diags *diag.Diagnostics) bool {
@@ -122,6 +136,10 @@ func (r *recordSetResource) apply(ctx context.Context, m *recordSetModel, creati
 		old, err := find(ctx, r.client, project, zone, name, typ)
 		if err != nil {
 			apiError(diags, err)
+			return false
+		}
+		if old != nil && old.ManagedBy != nil {
+			managedError(diags, name, typ, old.ManagedBy.Service)
 			return false
 		}
 		if old != nil {
@@ -240,6 +258,13 @@ func (r *recordSetResource) ImportState(ctx context.Context, req resource.Import
 			resp.Diagnostics.AddError("Zone not found", parts[0]+" is not in any project you can access.")
 			return
 		}
+	}
+	if old, err := find(ctx, r.client, project, parts[0], parts[1], parts[2]); err != nil {
+		apiError(&resp.Diagnostics, err)
+		return
+	} else if old != nil && old.ManagedBy != nil {
+		managedError(&resp.Diagnostics, parts[1], parts[2], old.ManagedBy.Service)
+		return
 	}
 	for k, v := range map[string]string{"project_id": project, "zone_id": parts[0], "name": parts[1], "type": parts[2]} {
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root(k), v)...)

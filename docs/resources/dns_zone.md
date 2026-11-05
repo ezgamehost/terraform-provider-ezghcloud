@@ -24,13 +24,13 @@ resource "ezghcloud_dns_zone" "main" {
 
 ### Required
 
-- `domain` (String) Domain name of the zone, such as example.com. Changing it replaces the zone.
+- `domain` (String) Domain name of the zone in lowercase, such as example.com, without a trailing dot. Changing it replaces the zone.
 - `project_id` (String) Project identifier. Changing it replaces the zone.
 
 ### Optional
 
 - `dnssec_enabled` (Boolean) Sign the zone with DNSSEC. Defaults to false.
-- `tags` (Map of String) Zone tags. The API can't change a zone's tags, so changing them replaces the zone.
+- `tags` (Map of String) Zone tags. The API can't change a zone's tags, and replacing a zone would delete its record sets, so a change is refused at plan.
 
 ### Read-Only
 

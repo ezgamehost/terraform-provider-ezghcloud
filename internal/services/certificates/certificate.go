@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/validate"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -17,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -56,7 +58,7 @@ func (*certificateResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 		"id":                       schema.StringAttribute{Computed: true, Description: "Certificate ID (crt_).", PlanModifiers: keep},
 		"project_id":               schema.StringAttribute{Required: true, Description: "Project identifier. Changing it replaces the certificate.", PlanModifiers: replace},
 		"name":                     schema.StringAttribute{Required: true, Description: "Name, 1 to 100 characters."},
-		"dns_names":                schema.SetAttribute{Required: true, ElementType: types.StringType, Description: "Names the certificate covers; each needs a domain authorization. Changing them replaces the certificate.", PlanModifiers: replaceSet},
+		"dns_names":                schema.SetAttribute{Required: true, ElementType: types.StringType, Description: "Names the certificate covers; each needs a domain authorization. Changing them replaces the certificate.", PlanModifiers: replaceSet, Validators: []validator.Set{validate.Name{Wildcard: true}}},
 		"domain_authorization_ids": schema.SetAttribute{Required: true, ElementType: types.StringType, Description: "Domain authorizations (dau_) that cover dns_names. Changing them replaces the certificate.", PlanModifiers: replaceSet},
 		"key_algorithm":            schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("ecdsa-p256"), Description: "ecdsa-p256 or rsa-2048. Defaults to ecdsa-p256. Changing it replaces the certificate.", PlanModifiers: replace},
 		"renewal_enabled":          schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), Description: "Renew the certificate automatically. Defaults to true."},

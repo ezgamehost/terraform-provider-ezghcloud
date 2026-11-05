@@ -24,7 +24,7 @@ resource "ezghcloud_certificate_domain_authorization" "example" {
 
 ### Required
 
-- `domain_name` (String) Domain name to authorize. Changing it replaces the authorization.
+- `domain_name` (String) Domain name to authorize, in lowercase without a trailing dot (punycode for other scripts). Changing it replaces the authorization.
 
 ### Optional
 

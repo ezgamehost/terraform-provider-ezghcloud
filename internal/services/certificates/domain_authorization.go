@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/validate"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -87,7 +89,7 @@ func (*authorizationResource) Schema(_ context.Context, _ resource.SchemaRequest
 	keep := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	resp.Schema = schema.Schema{Description: "Permission for the organization to get Web Certificates for a domain and its subdomains. Set dns_zone_id to have EZGH write the validation records into one of your EZGH DNS zones; otherwise add the records in dns_instructions yourself.", Attributes: map[string]schema.Attribute{
 		"id":          schema.StringAttribute{Computed: true, Description: "Domain authorization ID (dau_).", PlanModifiers: keep},
-		"domain_name": schema.StringAttribute{Required: true, Description: "Domain name to authorize. Changing it replaces the authorization.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"domain_name": schema.StringAttribute{Required: true, Description: "Domain name to authorize, in lowercase without a trailing dot (punycode for other scripts). Changing it replaces the authorization.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Validators: []validator.String{validate.Name{}}},
 		"name":        schema.StringAttribute{Optional: true, Computed: true, Description: "Name, 1 to 100 characters. Defaults to the domain name.", PlanModifiers: keep},
 		"enabled":     schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), Description: "Whether certificates can be issued for the domain. Defaults to true."},
 		"tags":        schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Resource tags."},

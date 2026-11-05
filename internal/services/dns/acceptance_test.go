@@ -212,6 +212,56 @@ func TestAccRecordSetExistsRefused(t *testing.T) {
 	}})
 }
 
+func (f *fixture) activeZone() {
+	f.zone = map[string]any{"slug": "zon_000000000001", "domain": "example.com", "tags": map[string]any{}, "status": "active", "nameservers": []any{},
+		"verification": map[string]any{"txtName": "", "txtValue": ""}, "dnssec": map[string]any{"enabled": false}}
+}
+
+// A record set another service owns can't be created or imported: no apply could ever clear it.
+func TestAccManagedRecordSetRefusedOnCreateAndImport(t *testing.T) {
+	f := newFixture(t)
+	f.activeZone()
+	f.sets = []map[string]any{{"name": "www", "type": "A", "ttl": 300, "values": []any{"192.0.2.9"},
+		"managedBy": map[string]any{"service": "certificates", "resourceName": "ezgh:certificates::org_test:dau_000000000001"}}}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
+		{Config: f.provider() + fmt.Sprintf(recordSet, 300), ExpectError: regexp.MustCompile(`managed by Web Certificates`)},
+		{Config: f.provider() + fmt.Sprintf(recordSet, 300), ResourceName: "ezghcloud_dns_record_set.www", ImportState: true, ImportStateId: "zon_000000000001/www/A",
+			ImportStatePersist: false, ExpectError: regexp.MustCompile(`managed by Web Certificates`)},
+	}})
+	if len(f.changes) != 0 {
+		t.Fatalf("a managed set was written: %v", f.changes)
+	}
+}
+
+func TestAccZoneTagChangeRefused(t *testing.T) {
+	f := newFixture(t)
+	withTags := func(v string) string {
+		return f.provider() + fmt.Sprintf(`
+resource "ezghcloud_dns_zone" "main" {
+ project_id = "prj_test"
+ domain = "example.com"
+ tags = { team = %q }
+}
+`, v)
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
+		{Config: withTags("a")},
+		{Config: withTags("b"), ExpectError: regexp.MustCompile(`tags can't change`)},
+	}})
+}
+
+func TestAccNonCanonicalNamesRefused(t *testing.T) {
+	f := newFixture(t)
+	f.activeZone()
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
+		{Config: f.provider() + strings.Replace(fmt.Sprintf(recordSet, 300), `name = "www"`, `name = "WWW"`, 1), ExpectError: regexp.MustCompile(`canonical form`)},
+		{Config: f.provider() + strings.Replace(fmt.Sprintf(zone, false), `example.com`, `Example.com.`, 1), ExpectError: regexp.MustCompile(`canonical form`)},
+	}})
+	if len(f.changes) != 0 || len(f.calls) != 0 {
+		t.Fatalf("the API was called: %v", f.calls)
+	}
+}
+
 // TestLiveDNS creates a zone and a record set on real EZGH. It runs only with TF_ACC=1 and
 // EZGH_LIVE=1: the explicit opt-in, never in CI. Use a test organization.
 func TestLiveDNS(t *testing.T) {

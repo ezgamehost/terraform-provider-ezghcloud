@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/validate"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -13,9 +14,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapdefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -62,10 +63,10 @@ func (*zoneResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *r
 	resp.Schema = schema.Schema{Description: "A public DNS zone. Destroying it deletes its record sets; remove record sets that other EZGH services manage (such as a domain authorization's validation records) first.", Attributes: map[string]schema.Attribute{
 		"id":             schema.StringAttribute{Computed: true, Description: "Zone ID (zon_).", PlanModifiers: keep},
 		"project_id":     schema.StringAttribute{Required: true, Description: "Project identifier. Changing it replaces the zone.", PlanModifiers: replace},
-		"domain":         schema.StringAttribute{Required: true, Description: "Domain name of the zone, such as example.com. Changing it replaces the zone.", PlanModifiers: replace},
+		"domain":         schema.StringAttribute{Required: true, Description: "Domain name of the zone in lowercase, such as example.com, without a trailing dot. Changing it replaces the zone.", PlanModifiers: replace, Validators: []validator.String{validate.Name{}}},
 		"dnssec_enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Sign the zone with DNSSEC. Defaults to false."},
 		"tags": schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})),
-			Description: "Zone tags. The API can't change a zone's tags, so changing them replaces the zone.", PlanModifiers: []planmodifier.Map{mapplanmodifier.RequiresReplace()}},
+			Description: "Zone tags. The API can't change a zone's tags, and replacing a zone would delete its record sets, so a change is refused at plan."},
 		"status":      schema.StringAttribute{Computed: true, Description: "pending until the zone's ownership is verified, then active."},
 		"nameservers": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Nameservers to delegate the domain to."},
 		"verification": schema.SingleNestedAttribute{Computed: true, Description: "The TXT record that proves control of the domain while the zone is pending.", Attributes: map[string]schema.Attribute{
@@ -185,4 +186,18 @@ func (r *zoneResource) ImportState(ctx context.Context, req resource.ImportState
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), project)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+}
+
+// ModifyPlan refuses a tag change: the API can't change tags in place, and a replacement would
+// delete the zone's record sets.
+func (r *zoneResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	var plan, state types.Map
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("tags"), &plan)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("tags"), &state)...)
+	if known(plan) && !plan.Equal(state) {
+		resp.Diagnostics.AddAttributeError(path.Root("tags"), "tags can't change", "EZGH DNS can't change a zone's tags, and replacing the zone would delete its record sets. Keep the tags as they are, or create a new zone and move the records.")
+	}
 }

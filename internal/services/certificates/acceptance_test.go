@@ -216,6 +216,21 @@ func TestAccCertificateFailedOperation(t *testing.T) {
 	}})
 }
 
+func TestAccNonCanonicalNamesRefused(t *testing.T) {
+	f := newFixture(t)
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
+		{Config: f.provider() + `
+resource "ezghcloud_certificate_domain_authorization" "x" {
+ domain_name = "Example.com"
+}
+`, ExpectError: regexp.MustCompile(`canonical form`)},
+		{Config: f.provider() + strings.Replace(chain, `["example.com"]`, `["*.Example.com"]`, 1), ExpectError: regexp.MustCompile(`canonical form`)},
+	}})
+	if len(f.posts) != 0 {
+		t.Fatalf("the API was called: %v", f.posts)
+	}
+}
+
 // TestLiveCertificate runs the zone, authorization and certificate chain on real EZGH. It runs only
 // with TF_ACC=1 and EZGH_LIVE=1, never in CI; use a test organization and a domain you own.
 func TestLiveCertificate(t *testing.T) {
