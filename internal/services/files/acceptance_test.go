@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -19,12 +18,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
-
-// Files isn't launched: the provider serves it only on this opt-in.
-func TestMain(m *testing.M) {
-	_ = os.Setenv("EZGHCLOUD_PREVIEW_FILES", "1")
-	os.Exit(m.Run())
-}
 
 var factories = map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(provider.New("test")())}
 

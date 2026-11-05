@@ -36,19 +36,11 @@ func (p *cloudProvider) Metadata(_ context.Context, _ framework.MetadataRequest,
 	resp.Version = p.version
 }
 
-// filesPreview is whether EZGH Files, not launched yet, is served: only with
-// EZGHCLOUD_PREVIEW_FILES=1 (its tests set it), so releases and their Registry docs leave it out.
-func filesPreview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_FILES") == "1" }
-
 func (p *cloudProvider) Schema(_ context.Context, _ framework.SchemaRequest, resp *framework.SchemaResponse) {
-	services := "orgs, compute, network, firewall, blockstore, images, databases"
-	if filesPreview() {
-		services += ", files"
-	}
 	resp.Schema = schema.Schema{Description: "Manage EZGH Cloud infrastructure and IAM through its public APIs.", Attributes: map[string]schema.Attribute{
 		"api_token":       schema.StringAttribute{Optional: true, Sensitive: true, Description: "Customer bearer credential. Defaults to EZGHCLOUD_API_TOKEN. The credential is never stored as a resource attribute."},
 		"organization_id": schema.StringAttribute{Optional: true, Description: "Organization identifier. Defaults to EZGHCLOUD_ORGANIZATION_ID. Use provider aliases for multiple organizations."},
-		"endpoints":       schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Optional API base URL overrides by service: " + services + ". Credentials are sent to these URLs; use trusted endpoints only. Defaults to public HTTPS APIs."},
+		"endpoints":       schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Optional API base URL overrides by service: orgs, compute, network, firewall, blockstore, images, databases, files. Credentials are sent to these URLs; use trusted endpoints only. Defaults to public HTTPS APIs."},
 	}}
 }
 func (p *cloudProvider) Configure(ctx context.Context, req framework.ConfigureRequest, resp *framework.ConfigureResponse) {
@@ -101,9 +93,7 @@ func (p *cloudProvider) Resources(context.Context) []func() resource.Resource {
 	out = append(out, iam.Resources()...)
 	out = append(out, network.Resources()...)
 	out = append(out, databases.Resources()...)
-	if filesPreview() {
-		out = append(out, files.Resources()...)
-	}
+	out = append(out, files.Resources()...)
 	return append(out, compute.Resources()...)
 }
 func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSource {
@@ -111,8 +101,6 @@ func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSou
 	out = append(out, iam.DataSources()...)
 	out = append(out, network.DataSources()...)
 	out = append(out, databases.DataSources()...)
-	if filesPreview() {
-		out = append(out, files.DataSources()...)
-	}
+	out = append(out, files.DataSources()...)
 	return append(out, compute.DataSources()...)
 }

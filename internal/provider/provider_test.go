@@ -26,14 +26,3 @@ func TestProviderSchema(t *testing.T) {
 		t.Fatalf("%+v", meta)
 	}
 }
-
-// Files isn't launched: it's served only on the EZGHCLOUD_PREVIEW_FILES=1 opt-in.
-func TestFilesOnlyOnPreviewOptIn(t *testing.T) {
-	count := func() int { return len(New("test")().Resources(context.Background())) }
-	t.Setenv("EZGHCLOUD_PREVIEW_FILES", "")
-	without := count()
-	t.Setenv("EZGHCLOUD_PREVIEW_FILES", "1")
-	if with := count(); with != without+3 {
-		t.Fatalf("%d resources with the opt-in, %d without", with, without)
-	}
-}
