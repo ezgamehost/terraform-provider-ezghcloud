@@ -165,7 +165,10 @@ func remove(ctx context.Context, c *client.Client, collection string, m *common,
 	defer cancel()
 	p := itemPath(c, m.ProjectID.ValueString(), collection, m.ID.ValueString())
 	out, err := c.Do(ctx, service, "DELETE", p, nil)
-	if err == nil {
+	var e *client.Error
+	if errors.As(err, &e) && e.StatusCode == 409 && (e.Code == "operation_in_progress" || strings.HasSuffix(e.Code, "_busy")) {
+		err = waitDeleting(ctx, c, p, err)
+	} else if err == nil {
 		err = waitResponse(ctx, c, out)
 		if err == nil {
 			_, err = c.Do(ctx, service, "GET", p, nil)
@@ -177,6 +180,29 @@ func remove(ctx context.Context, c *client.Client, collection string, m *common,
 	}
 	if missing, e := confirmedMissing(ctx, c, m.ProjectID.ValueString(), err); !missing {
 		apiError(diags, e)
+	}
+}
+
+// waitDeleting waits out a delete already in progress (an earlier apply's that was cut short): it
+// returns the GET's error once the resource is gone, or busy when it isn't being deleted.
+func waitDeleting(ctx context.Context, c *client.Client, p string, busy error) error {
+	for {
+		out, err := c.Do(ctx, service, "GET", p, nil)
+		if err != nil {
+			return err
+		}
+		var v struct{ Status string }
+		if err = out.Decode(&v); err != nil {
+			return err
+		}
+		if v.Status != "deleting" {
+			return busy
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
@@ -238,6 +264,10 @@ func configure(data any, d *diag.Diagnostics, c **client.Client) {
 // provider's rule of naming only the permission.
 func apiError(d *diag.Diagnostics, err error) {
 	detail := err.Error()
+	var op *client.OperationError
+	if errors.As(err, &op) && op.Message != "" && op.Code != "access_denied" {
+		detail += "\n" + op.Message
+	}
 	var e *client.Error
 	if errors.As(err, &e) && e.Code != "access_denied" {
 		detail += "\n" + e.Message

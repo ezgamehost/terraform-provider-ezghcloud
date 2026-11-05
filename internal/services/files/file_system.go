@@ -49,7 +49,7 @@ func (*fileSystemResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 	a["root_squash"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), Description: "Map a client's root user to an unprivileged user. Defaults to true."}
 	a["require_tls"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Accept only mounts with TLS (xprtsec=tls). Defaults to false."}
 	a["deletion_protection"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "While true, the file system can't be destroyed."}
-	a["size_bytes"] = schema.StringAttribute{Computed: true, Description: "Bytes stored, as a decimal string, measured about once a minute."}
+	a["size_bytes"] = schema.StringAttribute{Computed: true, Description: "Bytes stored, as a decimal string, measured about once an hour."}
 	a["throughput_mbps"] = schema.Int64Attribute{Computed: true, Description: "Throughput limit in MB/s.", PlanModifiers: keepInt}
 	a["metadata_ops_per_second"] = schema.Int64Attribute{Computed: true, Description: "Metadata operations per second limit.", PlanModifiers: keepInt}
 	resp.Schema = schema.Schema{Description: "An elastic NFS file system in one VPC, mounted through its mount targets. Destroying it deletes its files; delete its mount targets and access points first.", Attributes: a}

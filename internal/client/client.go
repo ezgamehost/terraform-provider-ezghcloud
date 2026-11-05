@@ -66,6 +66,17 @@ func (e *Error) Error() string {
 	return message
 }
 
+// OperationError is an operation that ended failed or cancelled, with its error's code. Error()
+// leaves Message out, as Error does; a service that trusts its own text adds it.
+type OperationError struct{ Status, Code, Message string }
+
+func (e *OperationError) Error() string {
+	if e.Code == "" {
+		return "operation ended with status " + e.Status + "; refresh the resource for details"
+	}
+	return "operation ended with status " + e.Status + " (" + e.Code + ")"
+}
+
 var permissionMessage = regexp.MustCompile(`(?:allowed to |permission[: ]+)([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)+)`)
 
 func New(cfg Config) *Client {
@@ -328,7 +339,12 @@ func (c *Client) Wait(ctx context.Context, service, location string) error {
 		case "succeeded":
 			return nil
 		case "failed", "cancelled", "canceled":
-			return fmt.Errorf("operation ended with status %s; refresh the resource for details", status)
+			opErr := &OperationError{Status: status}
+			if e, _ := out["error"].(map[string]any); e != nil {
+				opErr.Code, _ = e["code"].(string)
+				opErr.Message, _ = e["message"].(string)
+			}
+			return opErr
 		case "pending", "queued", "running", "in_progress":
 		default:
 			return fmt.Errorf("API returned unknown operation status %q", status)

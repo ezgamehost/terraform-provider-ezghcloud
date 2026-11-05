@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +20,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
+// Files isn't launched: the provider serves it only on this opt-in.
+func TestMain(m *testing.M) {
+	_ = os.Setenv("EZGHCLOUD_PREVIEW_FILES", "1")
+	os.Exit(m.Run())
+}
+
 var factories = map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(provider.New("test")())}
 
 // fixture is files-api over memory: creates and deletes answer 202 and their operations succeed at
@@ -27,11 +35,16 @@ type fixture struct {
 	objects map[string]map[string]any // by slug
 	next    int
 	calls   []string // METHOD collection[/slug] of every resource call
+	// failMountTarget fails the next mount target create's operation with this code.
+	failMountTarget string
+	failedOps       map[string]string // operation ID: error code
+	// busyDelete answers the next DELETE 409 operation_in_progress, as for a delete already running.
+	busyDelete bool
 	*httptest.Server
 }
 
 func newFixture(t *testing.T) *fixture {
-	f := &fixture{objects: map[string]map[string]any{}}
+	f := &fixture{objects: map[string]map[string]any{}, failedOps: map[string]string{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Close)
 	return f
@@ -55,6 +68,10 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if len(parts) == 5 && parts[3] == "operations" {
+		if code := f.failedOps[parts[4]]; code != "" {
+			send(200, map[string]any{"id": parts[4], "status": "failed", "error": map[string]any{"code": code, "message": "The subnet has no free address."}})
+			return
+		}
 		send(200, map[string]any{"id": parts[4], "status": "succeeded"})
 		return
 	}
@@ -102,6 +119,9 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			if _, ok := body["allowedSourceCidrs"]; !ok {
 				obj["allowedSourceCidrs"] = []any{"10.0.0.0/16"}
 			}
+			if f.failMountTarget != "" {
+				obj["status"], f.failedOps["op-"+slug], f.failMountTarget = "failed", f.failMountTarget, ""
+			}
 		case "access-points":
 			if _, ok := body["rootDirectory"]; !ok {
 				obj["rootDirectory"] = map[string]any{"path": "/", "creationInfo": nil}
@@ -115,6 +135,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 				obj["posixUser"] = nil
 			}
 		}
+		normalizeCidrs(obj)
 		f.objects[slug] = obj
 		accepted(slug)
 		return
@@ -126,6 +147,9 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case "GET":
+		if obj["status"] == "deleting" { // the delete in progress finishes
+			delete(f.objects, parts[6])
+		}
 		send(200, obj)
 	case "PATCH":
 		for _, k := range []string{"vpc", "fileSystem", "subnet", "rootDirectory", "posixUser"} {
@@ -140,8 +164,14 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		if body["description"] == "" {
 			obj["description"] = nil
 		}
+		normalizeCidrs(obj)
 		send(200, obj)
 	case "DELETE":
+		if f.busyDelete {
+			f.busyDelete, obj["status"] = false, "deleting"
+			fail(409, "operation_in_progress")
+			return
+		}
 		if collection == "file-systems" {
 			if obj["deletionProtection"] == true {
 				fail(409, "deletion_protected")
@@ -157,6 +187,22 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		delete(f.objects, parts[6])
 		accepted(parts[6])
 	}
+}
+
+// normalizeCidrs dedupes and sorts allowedSourceCidrs, as files-api does.
+func normalizeCidrs(obj map[string]any) {
+	list, ok := obj["allowedSourceCidrs"].([]any)
+	if !ok {
+		return
+	}
+	var out []string
+	for _, c := range list {
+		if !slices.Contains(out, c.(string)) {
+			out = append(out, c.(string))
+		}
+	}
+	slices.Sort(out)
+	obj["allowedSourceCidrs"] = out
 }
 
 func (f *fixture) provider() string {
@@ -263,11 +309,14 @@ resource "ezghcloud_mount_target" "web" {
 			resource.TestCheckResourceAttr(r, "hostname", "fmt_000000000002.files.us-west-1.ezghcloud.com"),
 			resource.TestCheckResourceAttr(r, "ip_address", "10.0.1.10"),
 			resource.TestCheckResourceAttr(r, "allowed_source_cidrs.0", "10.0.0.0/16"))},
-		{Config: config(`allowed_source_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]`), ConfigPlanChecks: action(r, plancheck.ResourceActionUpdate), Check: resource.ComposeAggregateTestCheckFunc(
+		// Unsorted and duplicated: the API sorts and dedupes, and the plan stays empty after apply.
+		{Config: config(`allowed_source_cidrs = ["10.0.2.0/24", "10.0.1.0/24", "10.0.2.0/24"]`), ConfigPlanChecks: action(r, plancheck.ResourceActionUpdate), Check: resource.ComposeAggregateTestCheckFunc(
 			resource.TestCheckResourceAttr(r, "id", "fmt_000000000002"),
 			resource.TestCheckResourceAttr(r, "allowed_source_cidrs.#", "2"),
-			resource.TestCheckResourceAttr(r, "allowed_source_cidrs.1", "10.0.2.0/24"),
+			resource.TestCheckTypeSetElemAttr(r, "allowed_source_cidrs.*", "10.0.1.0/24"),
+			resource.TestCheckTypeSetElemAttr(r, "allowed_source_cidrs.*", "10.0.2.0/24"),
 			resource.TestCheckResourceAttr(r, "hostname", "fmt_000000000002.files.us-west-1.ezghcloud.com"))},
+		{Config: config(`allowed_source_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]`), ConfigPlanChecks: action(r, plancheck.ResourceActionNoop)},
 		{Config: strings.Replace(config(`allowed_source_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]`), "sbn_123456789abc", "sbn_999999999999", 1),
 			ConfigPlanChecks: action(r, plancheck.ResourceActionDestroyBeforeCreate),
 			Check:            resource.TestCheckResourceAttr(r, "subnet_id", "sbn_999999999999")},
@@ -321,5 +370,23 @@ resource "ezghcloud_access_point" "root" {
 		{ResourceName: "ezghcloud_access_point.root", ImportState: true, ImportStateIdFunc: func(s *terraform.State) (string, error) {
 			return "org_test/prj_test/" + s.RootModule().Resources["ezghcloud_access_point.root"].Primary.ID, nil
 		}, ImportStateVerify: true},
+	}})
+}
+
+// A create whose operation fails reports the operation's code and message; a destroy that meets a
+// delete already in progress waits for it.
+func TestAccMountTargetFailedCreateAndBusyDelete(t *testing.T) {
+	f := newFixture(t)
+	config := f.provider() + fmt.Sprintf(fileSystem, "shared", false) + `
+resource "ezghcloud_mount_target" "web" {
+ project_id = "prj_test"
+ file_system_id = ezghcloud_file_system.shared.id
+ subnet_id = "sbn_123456789abc"
+}
+`
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, CheckDestroy: gone(f), Steps: []resource.TestStep{
+		{PreConfig: func() { f.failMountTarget = "subnet_has_no_room" }, Config: config,
+			ExpectError: regexp.MustCompile(`(?s)subnet_has_no_room.*The subnet has no free address`)},
+		{PreConfig: func() { f.busyDelete = true }, Config: f.provider() + fmt.Sprintf(fileSystem, "shared", false)},
 	}})
 }

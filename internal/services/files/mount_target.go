@@ -6,8 +6,8 @@ import (
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -16,7 +16,7 @@ type mountTargetModel struct {
 	FileSystemID       types.String `tfsdk:"file_system_id"`
 	SubnetID           types.String `tfsdk:"subnet_id"`
 	VPCID              types.String `tfsdk:"vpc_id"`
-	AllowedSourceCIDRs types.List   `tfsdk:"allowed_source_cidrs"`
+	AllowedSourceCIDRs types.Set    `tfsdk:"allowed_source_cidrs"`
 	Hostname           types.String `tfsdk:"hostname"`
 	IPAddress          types.String `tfsdk:"ip_address"`
 }
@@ -38,7 +38,7 @@ func (*mountTargetResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 	a["file_system_id"] = schema.StringAttribute{Required: true, Description: "File system (fsy_) it serves. Changing it replaces the mount target.", PlanModifiers: replace}
 	a["subnet_id"] = schema.StringAttribute{Required: true, Description: "Subnet (sbn_) in the file system's VPC it gets its address in; one mount target per subnet per file system. Changing it replaces the mount target.", PlanModifiers: replace}
 	a["vpc_id"] = schema.StringAttribute{Computed: true, Description: "VPC of the subnet.", PlanModifiers: keepString}
-	a["allowed_source_cidrs"] = schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "IPv4 CIDRs allowed to mount. Left out, the VPC's ranges. Changes in place.", PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}}
+	a["allowed_source_cidrs"] = schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "IPv4 CIDRs allowed to mount. Left out, the VPC's ranges. Changes in place.", PlanModifiers: []planmodifier.Set{setplanmodifier.UseStateForUnknown()}}
 	a["hostname"] = schema.StringAttribute{Computed: true, Description: "DNS name to mount, as <hostname>:/<file system or access point ID>.", PlanModifiers: keepString}
 	a["ip_address"] = schema.StringAttribute{Computed: true, Description: "IPv4 address in the subnet.", PlanModifiers: keepString}
 	resp.Schema = schema.Schema{Description: "A file system's NFS endpoint in one subnet, reachable from the whole VPC. Most file systems need one.", Attributes: a}
@@ -134,6 +134,6 @@ func (m *mountTargetModel) fromAPI(ctx context.Context, v mountTargetView, org s
 	if v.AllowedSourceCidrs == nil {
 		v.AllowedSourceCidrs = []string{}
 	}
-	m.AllowedSourceCIDRs, _ = types.ListValueFrom(ctx, types.StringType, v.AllowedSourceCidrs)
+	m.AllowedSourceCIDRs, _ = types.SetValueFrom(ctx, types.StringType, v.AllowedSourceCidrs)
 	m.Hostname, m.IPAddress = types.StringPointerValue(v.Hostname), types.StringPointerValue(v.IPv4Address)
 }
