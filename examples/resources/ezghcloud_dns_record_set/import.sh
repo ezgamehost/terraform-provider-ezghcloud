@@ -1,0 +1,1 @@
+terraform import ezghcloud_dns_record_set.www zon_xxxxxxxxxxxx/www/A

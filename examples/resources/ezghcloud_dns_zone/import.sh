@@ -1,0 +1,1 @@
+terraform import ezghcloud_dns_zone.main prj_xxxxxxxxxxxx/zon_xxxxxxxxxxxx
