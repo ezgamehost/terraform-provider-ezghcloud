@@ -21,7 +21,7 @@ identity associations are synchronous. A destroy that meets a delete in progress
 | Cluster `public_access_cidrs`, `logging_types`, `logging_project_id`, maintenance window, `tags` | One `PATCH` with what changed. `public_access_cidrs = []` closes the public endpoint; left out at create, the API's `0.0.0.0/0`. Removing `public_access_cidrs` or the maintenance window from config later keeps the last value (they're optional and computed); set them to change them |
 | Cluster `bootstrap_creator_access` on import | The API doesn't show it, so an import leaves it null and the next apply records the config's value without a change |
 | Cluster, node group and add-on read while `creating` or `updating` | When state holds the operation (an apply whose wait was cut short), Read waits for it, so the next plan sees where it ended instead of diffing against a change still running |
-| Node group and add-on `status` `failed` | The plan replaces it: delete, then create again, which shows the API's refusal if there is one |
+| Node group and add-on `status` `failed` | The plan replaces it: delete, then create again, which shows the API's refusal if there is one. A failed `vpc-cni`, `kube-proxy` or `coredns` (not removable) can't be replaced: the plan warns and leaves it, and changes to it are refused until it's active again |
 | Node group `desired_size` | Create only, never drift: Cluster Autoscaler owns the size after create. A later change is saved to state with a plan warning. Import reads the current size |
 | Node group `min_size`, `max_size`, `version`, `labels`, `taints`, `max_unavailable_percent`, `tags` | One `PATCH` in place |
 | Node group `cluster_id`, `name`, `instance_type`, `subnet_id`, `root_volume_size_gib`, `bot_id`, `ssh_key_ids` | Replace |

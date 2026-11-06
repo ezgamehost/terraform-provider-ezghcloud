@@ -306,3 +306,43 @@ func TestClusterImportedCreatorAccess(t *testing.T) {
 		t.Fatal(resp.Diagnostics)
 	}
 }
+
+// A failed add-on is replaced, except one that can't be removed: that stays, with a warning.
+func TestAddonFailedReplacedUnlessLasting(t *testing.T) {
+	ctx := context.Background()
+	r := &addonResource{}
+	for name, replaced := range map[string]bool{"metrics-server": true, "pod-identity-agent": true, "coredns": false} {
+		var m addonModel
+		m.fromAPI(addonView{Slug: "kad_123456789abc", Cluster: "kcl_123456789abc", Name: name, Status: "failed", Version: "1.0.0"}, "org_test")
+		m.ProjectID = types.StringValue("prj_test")
+		s := asState(t, r, &m)
+		resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}
+		r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: s, Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}, &resp)
+		if resp.Diagnostics.HasError() || (len(resp.RequiresReplace) == 1) != replaced || (resp.Diagnostics.WarningsCount() == 1) == replaced {
+			t.Fatalf("%s: %v %v", name, resp.Diagnostics, resp.RequiresReplace)
+		}
+	}
+}
+
+// An add-on a new cluster doesn't install keeps its addon_exists refusal: it was made elsewhere.
+func TestAddonExistsOutsideDefaultsIsRefused(t *testing.T) {
+	ctx := context.Background()
+	var listed atomic.Bool
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			listed.Store(true)
+		}
+		w.WriteHeader(409)
+		_, _ = w.Write([]byte(`{"error":{"code":"addon_exists","message":"The cluster already has metrics-server"}}`))
+	})
+	r := &addonResource{client: c}
+	m := addonModel{ID: types.StringUnknown(), OrganizationID: types.StringUnknown(), ProjectID: types.StringValue("prj_test"), ClusterID: types.StringValue("kcl_123456789abc"),
+		ResourceName: types.StringUnknown(), Name: types.StringValue("metrics-server"), Version: types.StringNull(), InstalledVersion: types.StringUnknown(),
+		Configuration: types.StringNull(), Status: types.StringUnknown(), OperationID: types.StringUnknown(), OperationTimeout: types.StringValue("1m")}
+	plan := asState(t, r, &m)
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: plan.Schema, Raw: plan.Raw}}, &resp)
+	if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "addon_exists") || listed.Load() {
+		t.Fatalf("listed=%v %v", listed.Load(), resp.Diagnostics)
+	}
+}

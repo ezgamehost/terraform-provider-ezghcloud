@@ -26,6 +26,9 @@ const addonTimeout = "10m"
 // addon_exists refusal stands.
 var clusterAddons = []string{"vpc-cni", "kube-proxy", "coredns", "pod-identity-agent", "blockstore-csi"}
 
+// lastingAddons can't be removed (meta.json removable: false), so a failed one can't be replaced.
+var lastingAddons = []string{"vpc-cni", "kube-proxy", "coredns"}
+
 type addonModel struct {
 	ID               types.String `tfsdk:"id"`
 	OrganizationID   types.String `tfsdk:"organization_id"`
@@ -83,9 +86,18 @@ func (r *addonResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 	if req.Plan.Raw.IsNull() {
 		return
 	}
-	replaceFailed(ctx, req, resp)
 	var plan addonModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if !req.State.Raw.IsNull() && slices.Contains(lastingAddons, plan.Name.ValueString()) {
+		var status types.String
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("status"), &status)...)
+		if status.ValueString() == "failed" {
+			resp.Diagnostics.AddAttributeWarning(path.Root("status"), plan.Name.ValueString()+" failed",
+				plan.Name.ValueString()+" is part of every cluster, so it can't be replaced: it stays as it is, and changes to it are refused until it's active again.")
+		}
+	} else {
+		replaceFailed(ctx, req, resp)
+	}
 	if resp.Diagnostics.HasError() || !known(plan.Configuration) {
 		return
 	}
