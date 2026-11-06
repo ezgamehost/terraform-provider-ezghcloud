@@ -12,6 +12,11 @@ and certificates, plus IAM bots, groups, policies, memberships, policy
 attachments, API keys, invitations, and federation configuration, with import and
 lookup data sources where supported.
 
+EZGH Kubernetes (clusters, node groups, add-ons, access entries and pod identity associations)
+isn't launched: the provider serves those resources only when `EZGHCLOUD_PREVIEW_KUBERNETES=1` is
+set, so releases and their generated docs leave them out. Its tests set it themselves. At launch,
+drop the gate and regenerate the docs.
+
 See the [provider design](docs/superpowers/specs/2026-11-01-terraform-provider-design.md).
 
 ## Development
