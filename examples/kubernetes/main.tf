@@ -13,6 +13,11 @@ terraform {
 # EZGHCLOUD_PREVIEW_KUBERNETES=1 while EZGH Kubernetes is in preview.
 provider "ezghcloud" {}
 
+variable "organization_id" {
+  type        = string
+  description = "The organization (org_), the same as EZGHCLOUD_ORGANIZATION_ID."
+}
+
 variable "project_id" {
   type        = string
   description = "Existing project ID."
@@ -65,7 +70,8 @@ provider "kubernetes" {
   exec {
     api_version = "client.authentication.k8s.io/v1"
     command     = "ezgh"
-    args        = ["kubernetes", "token", "--cluster", ezghcloud_kubernetes_cluster.prod.id]
+    # What `ezgh kubernetes update-kubeconfig` writes; add "--profile", "<name>" first to pin a profile.
+    args = ["--org", var.organization_id, "--project", var.project_id, "kubernetes", "token", "--cluster", ezghcloud_kubernetes_cluster.prod.id]
   }
 }
 

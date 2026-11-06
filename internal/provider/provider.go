@@ -83,7 +83,7 @@ func (p *cloudProvider) Configure(ctx context.Context, req framework.ConfigureRe
 		resp.Diagnostics.Append(cfg.Endpoints.ElementsAs(ctx, &endpoints, false)...)
 	}
 	for service, endpoint := range endpoints {
-		if _, ok := client.DefaultEndpoints[service]; !ok {
+		if _, ok := client.DefaultEndpoints[service]; !ok || (service == "kubernetes" && !kubernetesPreview()) {
 			resp.Diagnostics.AddError("Unknown API service", fmt.Sprintf("Unsupported endpoint key %q.", service))
 			continue
 		}

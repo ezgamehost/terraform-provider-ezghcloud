@@ -116,6 +116,7 @@ func (r *nodeGroupResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 	var plan, state nodeGroupModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	replaceFailed(ctx, req, resp)
 	if !resp.Diagnostics.HasError() && known(plan.DesiredSize) && !plan.DesiredSize.Equal(state.DesiredSize) {
 		resp.Diagnostics.AddAttributeWarning(path.Root("desired_size"), "desired_size only applies at create",
 			"Cluster Autoscaler sizes the node group after it's created. This change is saved to state and does nothing; change min_size or max_size instead.")
@@ -182,6 +183,9 @@ func (r *nodeGroupResource) Read(ctx context.Context, req resource.ReadRequest, 
 	if readOrForget(ctx, r.client, m.ProjectID.ValueString(), r.path(m, m.ID.ValueString()), "kng_", &v, &resp.State, &resp.Diagnostics) {
 		m.fromAPI(ctx, v, r.client.OrganizationID)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+		if waitMoving(ctx, r.client, v.Status, m.OperationID, m.OperationTimeout, nodeGroupTimeout, &resp.Diagnostics) {
+			r.refresh(ctx, &m, &resp.State, &resp.Diagnostics)
+		}
 	}
 }
 

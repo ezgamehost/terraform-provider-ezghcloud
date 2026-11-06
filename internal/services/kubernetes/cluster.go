@@ -107,22 +107,22 @@ func (*clusterResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 		"subnet_id":              schema.StringAttribute{Required: true, Description: "Subnet (sbn_) the endpoint's private addresses live in. Its route table must send 0.0.0.0/0 to a Network Gateway. " + fixedAtCreate},
 		"bot_id":                 schema.StringAttribute{Required: true, Description: "Cluster Bot (bot_): load balancers, volumes and node capacity the cluster makes are made as this Bot. Needs KubernetesClusterAccess, and the caller needs bots.pass on it. " + fixedAtCreate},
 		"encryption_key_id":      schema.StringAttribute{Optional: true, Description: "Keys key (kms_) Kubernetes Secrets are encrypted with. Left out, an EZGH-managed key. " + fixedAtCreate},
-		"public_access_cidrs":    schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "IPv4 CIDRs allowed to reach the public endpoint, at most 40. Left out, 0.0.0.0/0. An empty list closes the public endpoint: kubectl then reaches the cluster only from inside the VPC.", PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}},
+		"public_access_cidrs":    schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "IPv4 CIDRs allowed to reach the public endpoint, at most 40. Left out at create, 0.0.0.0/0; removed later, the last value stays. An empty list closes the public endpoint: kubectl then reaches the cluster only from inside the VPC.", PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}},
 		"service_ipv4_cidr":      schema.StringAttribute{Optional: true, Computed: true, Description: "IPv4 range Services get addresses from. Left out, 10.100.0.0/16. " + fixedAtCreate, PlanModifiers: keepString},
 		"service_ipv6_cidr":      computed("IPv6 range Services get addresses from.", true),
 		"logging_types":          schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})), Description: "Control-plane logs sent to logging_project_id's Obs: api, audit, authenticator, controllerManager and scheduler. Billed as log ingest."},
 		"logging_project_id":     schema.StringAttribute{Optional: true, Description: "Project (prj_) whose Obs receives the control-plane logs. Required with logging_types."},
-		"maintenance_window_day": schema.StringAttribute{Optional: true, Computed: true, Description: "Day of the weekly 4-hour maintenance window, monday to sunday. Set with maintenance_window_start_hour; left out, EZGH picks one.", PlanModifiers: keepString},
+		"maintenance_window_day": schema.StringAttribute{Optional: true, Computed: true, Description: "Day of the weekly 4-hour maintenance window, monday to sunday. Set with maintenance_window_start_hour; left out at create, EZGH picks one; removed later, the last window stays.", PlanModifiers: keepString},
 		"maintenance_window_start_hour": schema.Int64Attribute{Optional: true, Computed: true, Description: "Start hour (UTC, 0 to 23) of the maintenance window.",
 			PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}},
 		"tags":                      schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Resource tags."},
 		"status":                    computed("What the cluster is doing: creating, active, updating, deleting or failed.", false),
 		"endpoint_hostname":         computed("The endpoint's public DNS name, for kubectl.", true),
 		"endpoint_private_hostname": computed("The endpoint's DNS name inside the VPC.", true),
-		"endpoint_public_ipv4":      computed("The endpoint's public IPv4 address; null until assigned.", false),
-		"certificate_authority":     computed("The cluster CA certificate, PEM; null until the cluster is active.", false),
+		"endpoint_public_ipv4":      computed("The endpoint's public IPv4 address; null until assigned.", true),
+		"certificate_authority":     computed("The cluster CA certificate, PEM; null until the cluster is active.", true),
 		"oidc_issuer":               computed("The cluster's service account token issuer, for other OIDC relying parties.", true),
-		"node_firewall_id":          computed("Firewall (fwl_) the cluster's nodes are in.", false),
+		"node_firewall_id":          computed("Firewall (fwl_) the cluster's nodes are in.", true),
 		"bootstrap_creator_access":  schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true), Description: "Give the caller who creates the cluster an access entry with cluster admin. " + fixedAtCreate},
 		"operation_id":              computed("Most recent operation initiated by this resource; unavailable on import.", false),
 		"operation_timeout":         schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(clusterTimeout), Description: "Maximum wait for each asynchronous operation, for example 45m."},
@@ -156,6 +156,9 @@ func (r *clusterResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	for name, pair := range map[string][2]attr.Value{"subnet_id": {plan.SubnetID, state.SubnetID}, "bot_id": {plan.BotID, state.BotID},
 		"encryption_key_id": {plan.EncryptionKeyID, state.EncryptionKeyID}, "service_ipv4_cidr": {plan.ServiceIPv4CIDR, state.ServiceIPv4CIDR},
 		"bootstrap_creator_access": {plan.BootstrapCreatorAccess, state.BootstrapCreatorAccess}} {
+		if name == "bootstrap_creator_access" && pair[1].IsNull() {
+			continue // imported: the API doesn't show it, so whatever the config says is kept
+		}
 		if !pair[0].Equal(pair[1]) {
 			resp.Diagnostics.AddAttributeError(path.Root(name), name+" can't change",
 				fmt.Sprintf("%s is fixed when the cluster is created, and replacing the cluster would lose its workloads. To change it, create a new cluster and move the workloads.", name))
@@ -225,17 +228,9 @@ func (r *clusterResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 	m.fromAPI(ctx, v, r.client.OrganizationID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
-	// A create whose wait was cut short is waited out here, so the next plan sees the cluster as it ends.
-	if v.Status != "creating" || m.OperationID.ValueString() == "" {
-		return
+	if waitMoving(ctx, r.client, v.Status, m.OperationID, m.OperationTimeout, clusterTimeout, &resp.Diagnostics) {
+		r.refresh(ctx, &m, &resp.State, &resp.Diagnostics)
 	}
-	waitCtx, cancel := timeoutContext(ctx, m.OperationTimeout, clusterTimeout, &resp.Diagnostics)
-	defer cancel()
-	if err := r.client.Wait(waitCtx, service, client.OrgPath(r.client.OrganizationID, "operations", m.OperationID.ValueString())); err != nil {
-		apiError(&resp.Diagnostics, err)
-		return
-	}
-	r.refresh(waitCtx, &m, &resp.State, &resp.Diagnostics)
 }
 
 func (r *clusterResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -332,9 +327,6 @@ func (f *clusterFields) fill(ctx context.Context, v clusterView, org string) {
 // fromAPI reads the cluster into the resource; what the API doesn't show keeps its planned value.
 func (m *clusterModel) fromAPI(ctx context.Context, v clusterView, org string) {
 	m.fill(ctx, v, org)
-	if !known(m.BootstrapCreatorAccess) {
-		m.BootstrapCreatorAccess = types.BoolValue(true) // import: what a create defaults to
-	}
 	if !known(m.OperationID) {
 		m.OperationID = types.StringValue("")
 	}

@@ -16,7 +16,9 @@ import (
 	framework "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -341,12 +343,20 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 					}
 					return nil
 				})},
+			{Config: strings.Replace(after, `policy = "edit"`, `policy = "clusterAdmin"`, 1), ExpectError: regexp.MustCompile(`clusterAdmin is for the whole cluster`)},
 			{Config: strings.Replace(after, `version = "1.37"`, `version = "1.36"`, 1), ExpectError: regexp.MustCompile(`Upgrade one minor version at a time`)},
 			{Config: strings.Replace(after, `bot_id = "bot_cluster00001"`, `bot_id = "bot_cluster00002"`, 1), ExpectError: regexp.MustCompile(`bot_id can't change`)},
-			{ResourceName: c, ImportState: true, ImportStateId: "org_test/prj_test/kcl_000000000001", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id"}},
+			{ResourceName: c, ImportState: true, ImportStateId: "org_test/prj_test/kcl_000000000001", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id", "bootstrap_creator_access"}},
 			{ResourceName: ng, ImportState: true, ImportStateIdFunc: func(s *terraform.State) (string, error) {
 				return "org_test/prj_test/kcl_000000000001/" + s.RootModule().Resources[ng].Primary.ID, nil
 			}, ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id", "desired_size"}},
+			{ResourceName: "ezghcloud_kubernetes_addon.metrics", ImportState: true, ImportStateIdFunc: func(s *terraform.State) (string, error) {
+				return "org_test/prj_test/kcl_000000000001/" + s.RootModule().Resources["ezghcloud_kubernetes_addon.metrics"].Primary.ID, nil
+			}, ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id", "configuration"}},
+			{ResourceName: "ezghcloud_kubernetes_addon.coredns", ImportState: true, ImportStateId: "org_test/prj_test/kcl_000000000001/kad_000000000099", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"operation_id"}},
+			{ResourceName: "ezghcloud_kubernetes_pod_identity_association.checkout", ImportState: true, ImportStateIdFunc: func(s *terraform.State) (string, error) {
+				return "org_test/prj_test/kcl_000000000001/" + s.RootModule().Resources["ezghcloud_kubernetes_pod_identity_association.checkout"].Primary.ID, nil
+			}, ImportStateVerify: true},
 			{ResourceName: "ezghcloud_kubernetes_access_entry.ops", ImportState: true, ImportStateIdFunc: func(s *terraform.State) (string, error) {
 				return "org_test/prj_test/kcl_000000000001/" + s.RootModule().Resources["ezghcloud_kubernetes_access_entry.ops"].Primary.ID, nil
 			}, ImportStateVerify: true},
@@ -377,6 +387,27 @@ func TestKubernetesHiddenWithoutPreview(t *testing.T) {
 		served := strings.Contains(strings.Join(names, " "), "kubernetes")
 		if served != (preview == "1") || described != (preview == "1") {
 			t.Fatalf("preview %q: served %v, described %v: %v", preview, served, described, names)
+		}
+	}
+}
+
+// An endpoints.kubernetes override is refused without the preview switch, as an unknown service.
+func TestKubernetesEndpointNeedsPreview(t *testing.T) {
+	ctx := context.Background()
+	for _, preview := range []string{"", "1"} {
+		t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", preview)
+		p := provider.New("test")()
+		var sr framework.SchemaResponse
+		p.Schema(ctx, framework.SchemaRequest{}, &sr)
+		raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+			"api_token":       tftypes.NewValue(tftypes.String, "token"),
+			"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
+			"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{"kubernetes": tftypes.NewValue(tftypes.String, "https://kubernetes.test")}),
+		})
+		var resp framework.ConfigureResponse
+		p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
+		if resp.Diagnostics.HasError() != (preview == "") {
+			t.Fatalf("preview %q: %v", preview, resp.Diagnostics)
 		}
 	}
 }

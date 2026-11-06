@@ -6,6 +6,7 @@ import (
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
@@ -67,6 +68,23 @@ func (*accessEntryResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 }
 func (r *accessEntryResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	configure(req.ProviderData, &resp.Diagnostics, &r.client)
+}
+
+// ValidateConfig refuses clusterAdmin for listed namespaces, as the API does: it's for the whole
+// cluster.
+func (r *accessEntryResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var policies types.List
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("access_policy"), &policies)...)
+	var ps []accessPolicy
+	if resp.Diagnostics.HasError() || !known(policies) || policies.ElementsAs(ctx, &ps, false).HasError() {
+		return
+	}
+	for i, p := range ps {
+		if p.Policy.ValueString() == "clusterAdmin" && known(p.Namespaces) && len(p.Namespaces.Elements()) > 0 {
+			resp.Diagnostics.AddAttributeError(path.Root("access_policy").AtListIndex(i).AtName("namespaces"), "clusterAdmin is for the whole cluster",
+				"Leave namespaces out for clusterAdmin, or use admin for listed namespaces.")
+		}
+	}
 }
 
 func (r *accessEntryResource) path(m accessEntryModel, id ...string) string {

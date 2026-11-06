@@ -349,6 +349,42 @@ func startAsync(ctx context.Context, c *client.Client, p string, body map[string
 	return finish(ctx, c, out, slug, opID.ValueString(), noun, d)
 }
 
+// waitMoving waits, in Read, for the operation a creating or updating resource is in (one whose wait
+// an apply cut short), so the next plan sees where it ends rather than diffing against a change still
+// running. It reports whether it waited; the caller reads the resource again.
+func waitMoving(ctx context.Context, c *client.Client, status string, op, timeout types.String, def string, d *diag.Diagnostics) bool {
+	if (status != "creating" && status != "updating") || op.ValueString() == "" {
+		return false
+	}
+	waitCtx, cancel := timeoutContext(ctx, timeout, def, d)
+	defer cancel()
+	if d.HasError() {
+		return false
+	}
+	if err := c.Wait(waitCtx, service, client.OrgPath(c.OrganizationID, "operations", op.ValueString())); err != nil {
+		var opErr *client.OperationError
+		if !errors.As(err, &opErr) { // a failed operation leaves the resource failed: the read shows it
+			apiError(d, err)
+			return false
+		}
+	}
+	return true
+}
+
+// replaceFailed plans a failed node group or add-on (a create or change that failed) as a
+// replacement: delete it and make it again, which shows the API's refusal if there is one.
+func replaceFailed(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	var status types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("status"), &status)...)
+	if status.ValueString() == "failed" {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("status"), types.StringUnknown())...)
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("status"))
+	}
+}
+
 // finish waits for an accepted operation.
 func finish(ctx context.Context, c *client.Client, out *client.Response, id, op, noun string, d *diag.Diagnostics) bool {
 	err := waitResponse(ctx, c, out)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
@@ -198,5 +199,110 @@ func TestAccessEntryPolicyScope(t *testing.T) {
 	}{{"view", nil}, {"admin", nil}, {"edit", []string{"shop", "web"}}}}, "org_test")
 	if !m.AccessPolicies.Equal(policies) {
 		t.Fatalf("cluster-wide written as [] drifted: %v", m.AccessPolicies)
+	}
+}
+
+// A create whose wait the timeout cuts short keeps the cluster in state, creating, as a warning; the
+// next Read waits for the operation and reads the cluster as it ended.
+func TestClusterCutShortWaitKeepsStateAndReadWaits(t *testing.T) {
+	ctx := context.Background()
+	var done atomic.Bool
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST":
+			w.Header().Set("Location", "/v1/organizations/org_test/operations/op1")
+			w.WriteHeader(202)
+			_, _ = w.Write([]byte(`{"id":"op1","status":"queued","target":{"id":"uuid","resourceName":"ezgh:us-west-1:org_test:prj_test:kcl_123456789abc"}}`))
+		case strings.Contains(r.URL.Path, "/operations/"):
+			status := "running"
+			if done.Load() {
+				status = "succeeded"
+			}
+			_, _ = w.Write([]byte(`{"id":"op1","status":"` + status + `"}`))
+		default:
+			status := "creating"
+			if done.Load() {
+				status = "active"
+			}
+			_, _ = w.Write([]byte(`{"slug":"kcl_123456789abc","status":"` + status + `","version":"1.36","endpoint":{"publicAccessCidrs":[]},"logging":{"types":[]}}`))
+		}
+	})
+	r := &clusterResource{client: c}
+	m := activeCluster()
+	m.ID, m.OrganizationID, m.Status, m.OperationID, m.OperationTimeout = types.StringUnknown(), types.StringUnknown(), types.StringUnknown(), types.StringUnknown(), types.StringValue("1s")
+	plan := asState(t, r, &m)
+	created := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: plan.Schema, Raw: plan.Raw}}, &created)
+	var got clusterModel
+	created.State.Get(ctx, &got)
+	if created.Diagnostics.HasError() || created.Diagnostics.WarningsCount() != 1 || got.ID.ValueString() != "kcl_123456789abc" || got.Status.ValueString() != "creating" || got.OperationID.ValueString() != "op1" {
+		t.Fatalf("cut-short create: %v %#v", created.Diagnostics, got)
+	}
+	done.Store(true)
+	read := resource.ReadResponse{State: created.State}
+	r.Read(ctx, resource.ReadRequest{State: created.State}, &read)
+	read.State.Get(ctx, &got)
+	if read.Diagnostics.HasError() || got.Status.ValueString() != "active" {
+		t.Fatalf("read didn't wait: %v %v", read.Diagnostics, got.Status)
+	}
+}
+
+// A node group updating under an operation state holds is waited for, then read again.
+func TestNodeGroupReadWaitsWhileUpdating(t *testing.T) {
+	ctx := context.Background()
+	var waited atomic.Bool
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/operations/op2") {
+			waited.Store(true)
+			_, _ = w.Write([]byte(`{"id":"op2","status":"succeeded"}`))
+			return
+		}
+		status := "updating"
+		if waited.Load() {
+			status = "active"
+		}
+		_, _ = w.Write([]byte(`{"slug":"kng_123456789abc","cluster":"kcl_123456789abc","status":"` + status + `","version":"1.37"}`))
+	})
+	r := &nodeGroupResource{client: c}
+	var m nodeGroupModel
+	m.fromAPI(ctx, nodeGroupView{Slug: "kng_123456789abc", Cluster: "kcl_123456789abc", Status: "updating", Version: "1.36", DesiredSize: 1}, "org_test")
+	m.ProjectID, m.OperationID = types.StringValue("prj_test"), types.StringValue("op2")
+	state := asState(t, r, &m)
+	read := resource.ReadResponse{State: state}
+	r.Read(ctx, resource.ReadRequest{State: state}, &read)
+	var got nodeGroupModel
+	read.State.Get(ctx, &got)
+	if read.Diagnostics.HasError() || !waited.Load() || got.Status.ValueString() != "active" || got.Version.ValueString() != "1.37" {
+		t.Fatalf("%v waited=%v %v", read.Diagnostics, waited.Load(), got.Status)
+	}
+}
+
+// A failed node group is planned as a replacement.
+func TestNodeGroupFailedIsReplaced(t *testing.T) {
+	ctx := context.Background()
+	r := &nodeGroupResource{}
+	var m nodeGroupModel
+	m.fromAPI(ctx, nodeGroupView{Slug: "kng_123456789abc", Cluster: "kcl_123456789abc", Status: "failed"}, "org_test")
+	m.ProjectID = types.StringValue("prj_test")
+	s := asState(t, r, &m)
+	resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: s, Plan: tfsdk.Plan{Schema: s.Schema, Raw: s.Raw}}, &resp)
+	if resp.Diagnostics.HasError() || len(resp.RequiresReplace) != 1 || resp.RequiresReplace[0].String() != "status" {
+		t.Fatalf("%v %v", resp.Diagnostics, resp.RequiresReplace)
+	}
+}
+
+// An imported cluster has no bootstrap_creator_access (the API doesn't show it): whatever the config
+// says is kept, even false, without a can't-change refusal.
+func TestClusterImportedCreatorAccess(t *testing.T) {
+	var m clusterModel
+	m.fromAPI(context.Background(), clusterView{Slug: "kcl_123456789abc"}, "org_test")
+	if !m.BootstrapCreatorAccess.IsNull() {
+		t.Fatalf("import guessed %v", m.BootstrapCreatorAccess)
+	}
+	state, plan := activeCluster(), activeCluster()
+	state.BootstrapCreatorAccess, plan.BootstrapCreatorAccess = types.BoolNull(), types.BoolValue(false)
+	if resp := modifyCluster(t, state, plan); resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
 	}
 }

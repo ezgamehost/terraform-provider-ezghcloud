@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -19,6 +20,11 @@ import (
 )
 
 const addonTimeout = "10m"
+
+// clusterAddons are the add-ons a new cluster installs (kubernetes-stack addons/*/meta.json
+// default: true): declaring one takes it over. Any other that exists was made elsewhere, and its
+// addon_exists refusal stands.
+var clusterAddons = []string{"vpc-cni", "kube-proxy", "coredns", "pod-identity-agent", "blockstore-csi"}
 
 type addonModel struct {
 	ID               types.String `tfsdk:"id"`
@@ -46,7 +52,7 @@ func (*addonResource) Metadata(_ context.Context, req resource.MetadataRequest, 
 	resp.TypeName = req.ProviderTypeName + "_kubernetes_addon"
 }
 func (*addonResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	resp.Schema = schema.Schema{Description: "A managed add-on in a cluster. Add-ons every cluster gets (vpc-cni, kube-proxy, coredns, pod-identity-agent, blockstore-csi) are taken over when declared, and left installed on destroy if they can't be removed. Fields EZGH manages are overwritten if changed in the cluster.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "A managed add-on in a cluster. Add-ons a new cluster installs (vpc-cni, kube-proxy, coredns, pod-identity-agent, blockstore-csi) are taken over when declared, and left installed on destroy if they can't be removed. Fields EZGH manages are overwritten if changed in the cluster.", Attributes: map[string]schema.Attribute{
 		"id":                schema.StringAttribute{Computed: true, Description: "Add-on ID (kad_).", PlanModifiers: keepString},
 		"organization_id":   schema.StringAttribute{Computed: true, Description: "Organization managed by the configured provider.", PlanModifiers: keepString},
 		"project_id":        schema.StringAttribute{Required: true, Description: "The cluster's project. Changing it replaces the add-on.", PlanModifiers: replace},
@@ -77,6 +83,7 @@ func (r *addonResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 	if req.Plan.Raw.IsNull() {
 		return
 	}
+	replaceFailed(ctx, req, resp)
 	var plan addonModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() || !known(plan.Configuration) {
@@ -126,7 +133,7 @@ func (r *addonResource) Create(ctx context.Context, req resource.CreateRequest, 
 	body["name"] = m.Name.ValueString()
 	out, err := r.client.Do(ctx, service, "POST", r.path(m), body)
 	var e *client.Error
-	if errors.As(err, &e) && e.StatusCode == 409 && e.Code == "addon_exists" {
+	if errors.As(err, &e) && e.StatusCode == 409 && e.Code == "addon_exists" && slices.Contains(clusterAddons, m.Name.ValueString()) {
 		r.adopt(ctx, &m, &resp.State, &resp.Diagnostics)
 		return
 	}
@@ -189,6 +196,9 @@ func (r *addonResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	if readOrForget(ctx, r.client, m.ProjectID.ValueString(), r.path(m, m.ID.ValueString()), "kad_", &v, &resp.State, &resp.Diagnostics) {
 		m.fromAPI(v, r.client.OrganizationID)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+		if waitMoving(ctx, r.client, v.Status, m.OperationID, m.OperationTimeout, addonTimeout, &resp.Diagnostics) {
+			r.refresh(ctx, &m, &resp.State, &resp.Diagnostics)
+		}
 	}
 }
 
