@@ -25,6 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -252,7 +253,7 @@ func (*wafResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *re
 			}}},
 	}
 	set, r := schema.NestedAttributeObject{Attributes: setAttrs}, schema.NestedAttributeObject{Attributes: ruleAttrs}
-	resp.Schema = schema.Schema{Description: "A WAF: custom rules and managed rule sets that inspect requests to the load balancers it's attached to. Attach it with ezghcloud_load_balancer_waf.", Attributes: map[string]schema.Attribute{
+	resp.Schema = schema.Schema{Description: "A WAF: custom rules and managed rule sets that inspect requests to the load balancers it's attached to. Attach it with ezghcloud_load_balancer_waf. An attached WAF can't be deleted, so a change that replaces it needs lifecycle { create_before_destroy = true }.", Attributes: map[string]schema.Attribute{
 		"id":              schema.StringAttribute{Computed: true, Description: "WAF ID (waf_).", PlanModifiers: keepString},
 		"organization_id": schema.StringAttribute{Computed: true, Description: "Organization managed by the configured provider.", PlanModifiers: keepString},
 		"project_id":      schema.StringAttribute{Required: true, Description: "Project identifier. Changing it replaces the WAF.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
@@ -274,8 +275,9 @@ func (*wafResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *re
 				"scope":       schema.StringAttribute{Required: true, Description: "off, matched (the requests a rule matched) or all."},
 				"environment": schema.StringAttribute{Optional: true, Description: "Observability environment in the WAF's project; required unless scope is off. Turning logging on needs obs.logs.ingest on the project."},
 			}},
-		"version":     schema.Int64Attribute{Computed: true, Description: "Rises on every change; updates are conditional on it."},
-		"attachments": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Load balancers (lbr_) the WAF is attached to."},
+		"version": schema.Int64Attribute{Computed: true, Description: "Rises on every change; updates are conditional on it."},
+		"attachments": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Load balancers (lbr_) the WAF is attached to.",
+			PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}}, // an update never changes them
 	}}
 }
 func (r *wafResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {

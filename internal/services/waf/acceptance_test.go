@@ -21,8 +21,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 var factories = map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(provider.New("test")())}
@@ -276,7 +278,10 @@ data "ezghcloud_waf_managed_rule_sets" "all" {}
 			resource.TestCheckResourceAttr("data.ezghcloud_waf_managed_rule_sets.all", "managed_rule_sets.0.name", "ezgh/core"))},
 		// A replace sends the version read; the rate limit turns into a case-sensitive regex block.
 		{Config: f.provider() + wafConfig("log", `{ name = "login", action = "block", conditions = [{ type = "regex", target = "header:User-Agent", value = "^curl/", case_sensitive = true }] }`),
-			ConfigPlanChecks: action(r, plancheck.ResourceActionUpdate), Check: resource.ComposeAggregateTestCheckFunc(
+			// An update keeps attachments known: only the load balancer changes them.
+			ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(r, plancheck.ResourceActionUpdate),
+				plancheck.ExpectKnownValue(r, tfjsonpath.New("attachments"), knownvalue.ListSizeExact(0))}},
+			Check: resource.ComposeAggregateTestCheckFunc(
 				f.called("PUT /v1/organizations/org_test/projects/prj_test/wafs/waf_000000000001 If-Match=\"1\""),
 				resource.TestCheckResourceAttr(r, "id", "waf_000000000001"),
 				resource.TestCheckResourceAttr(r, "version", "2"),
