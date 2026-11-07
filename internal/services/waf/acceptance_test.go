@@ -1,6 +1,7 @@
 package waf_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,8 +13,13 @@ import (
 	"testing"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/provider"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	framework "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -241,6 +247,7 @@ resource "ezghcloud_waf" "web" {
 const loginLimit = `{ name = "login", action = "rateLimit", rate_limit = { limit = 100, window_seconds = 60 }, conditions = [{ type = "equals", target = "path", value = "/login" }] }`
 
 func TestAccWAFLifecycle(t *testing.T) {
+	t.Setenv("EZGHCLOUD_PREVIEW_WAF", "1")
 	f := newFixture(t)
 	r := "ezghcloud_waf.web"
 	data := `
@@ -305,6 +312,7 @@ resource "ezghcloud_waf" "web" {
 }
 
 func TestAccLoadBalancerWAF(t *testing.T) {
+	t.Setenv("EZGHCLOUD_PREVIEW_WAF", "1")
 	f := newFixture(t)
 	r := "ezghcloud_load_balancer_waf.web"
 	config := func(waf string) string {
@@ -350,4 +358,45 @@ removed {
 `, ExpectError: regexp.MustCompile(`waf_in_use`)},
 		{PreConfig: func() { f.mu.Lock(); f.lbWaf = nil; f.mu.Unlock() }, Config: f.provider()},
 	}})
+}
+
+// Without EZGHCLOUD_PREVIEW_WAF=1 the provider serves no WAF resource or data source, its endpoints
+// description names neither waf nor lb, and an endpoints.waf or endpoints.lb override is refused.
+func TestWAFHiddenWithoutPreview(t *testing.T) {
+	ctx := context.Background()
+	for _, preview := range []string{"", "1"} {
+		t.Setenv("EZGHCLOUD_PREVIEW_WAF", preview)
+		p := provider.New("test")()
+		var names []string
+		for _, r := range p.Resources(ctx) {
+			var resp fwresource.MetadataResponse
+			r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+			names = append(names, resp.TypeName)
+		}
+		for _, d := range p.DataSources(ctx) {
+			var resp datasource.MetadataResponse
+			d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+			names = append(names, resp.TypeName)
+		}
+		var sr framework.SchemaResponse
+		p.Schema(ctx, framework.SchemaRequest{}, &sr)
+		description := sr.Schema.Attributes["endpoints"].GetDescription()
+		described := strings.Contains(description, "waf") || strings.Contains(description, " lb,")
+		served := strings.Contains(strings.Join(names, " "), "waf")
+		if served != (preview == "1") || described != (preview == "1") {
+			t.Fatalf("preview %q: served %v, described %v: %v", preview, served, described, names)
+		}
+		for _, key := range []string{"waf", "lb"} {
+			raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+				"api_token":       tftypes.NewValue(tftypes.String, "token"),
+				"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
+				"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{key: tftypes.NewValue(tftypes.String, "https://"+key+".test")}),
+			})
+			var resp framework.ConfigureResponse
+			p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
+			if resp.Diagnostics.HasError() != (preview == "") {
+				t.Fatalf("preview %q, endpoints.%s: %v", preview, key, resp.Diagnostics)
+			}
+		}
+	}
 }
