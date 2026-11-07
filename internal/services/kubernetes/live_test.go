@@ -17,7 +17,6 @@ func TestLiveKubernetesLifecycle(t *testing.T) {
 	if os.Getenv("TF_ACC") != "1" || os.Getenv("EZGH_PROFILE") != "dev" {
 		t.Skip("set TF_ACC=1 and EZGH_PROFILE=dev to run against real EZGH")
 	}
-	t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", "1")
 	env := map[string]string{}
 	for _, k := range []string{"EZGHCLOUD_API_TOKEN", "EZGHCLOUD_ORGANIZATION_ID", "EZGHCLOUD_TEST_PROJECT_ID", "EZGHCLOUD_TEST_SUBNET_ID", "EZGHCLOUD_TEST_CLUSTER_BOT_ID", "EZGHCLOUD_TEST_NODE_BOT_ID"} {
 		if env[k] = os.Getenv(k); env[k] == "" {

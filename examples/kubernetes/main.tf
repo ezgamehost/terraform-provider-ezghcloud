@@ -9,8 +9,7 @@ terraform {
   }
 }
 
-# Supply EZGHCLOUD_API_TOKEN and EZGHCLOUD_ORGANIZATION_ID in the environment, and
-# EZGHCLOUD_PREVIEW_KUBERNETES=1 while EZGH Kubernetes is in preview.
+# Supply EZGHCLOUD_API_TOKEN and EZGHCLOUD_ORGANIZATION_ID in the environment.
 provider "ezghcloud" {}
 
 variable "organization_id" {

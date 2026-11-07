@@ -1,9 +1,5 @@
 # Kubernetes lifecycle
 
-Served only with `EZGHCLOUD_PREVIEW_KUBERNETES=1` until EZGH Kubernetes launches (Gate 3): releases and
-their generated Registry docs leave it out. The tests set it themselves. At launch, drop the switch in
-`internal/provider/provider.go` and regenerate `docs/`.
-
 The schemas were checked against kubernetes-api's OpenAPI overlay and handlers (kubernetes-stack
 `d8d559e`, K1) on 2026-11-06. Responses carry a UUID `id` and a prefixed `slug`; Terraform IDs are the slug
 (`kcl_`, `kng_`, `kad_`, `kae_`, `kpa_`). Clusters, node groups and add-ons are asynchronous: a create
@@ -30,12 +26,11 @@ identity associations are synchronous. A destroy that meets a delete in progress
 | Add-on a new cluster installs (`vpc-cni`, `kube-proxy`, `coredns`, `pod-identity-agent`, `blockstore-csi`, from kubernetes-stack `addons/*/meta.json`) | Create takes it over (`409 addon_exists` → `PATCH`). Destroy of one that can't be removed (`409 addon_not_removable`) leaves it installed, as last configured, with a warning |
 | Access entry `principal_type`, `principal_id` | Two attributes, not the plan's single `principal`: the API takes `{type, id}`, with a user's own ID, a Bot's or SSO user's UUID (never its `bot_` or `usr_` slug) and a `grp_` ID for a group. Nothing is validated here; the API refuses a wrong one. Both replace |
 | Access entry `access_policy` | Blocks of `policy` and `namespaces`; left out (or `[]`), the whole cluster (the API's `null`). `clusterAdmin` with namespaces is refused at validate, as the API refuses it |
-| Provider `endpoints.kubernetes` | Refused without the preview switch, as an unknown service |
+| Provider `endpoints.kubernetes` | An override like any other service's |
 | Pod identity association `namespace`, `service_account`, `cluster_id` | Replace; `bot_id` and `tags` change in place |
 | Data source `ezghcloud_kubernetes_cluster` | By `id` and `project_id`: `endpoint_hostname` and `certificate_authority` for the kubernetes provider. No token data source: it would put a bearer in state; `examples/kubernetes/main.tf` uses the `ezgh kubernetes token` exec plugin |
 
 Imports: `organization_id/project_id/kcl_…` for a cluster, `organization_id/project_id/kcl_…/<id>` for the
 rest.
 
-`TestLiveKubernetesLifecycle` runs only with `TF_ACC=1` and `EZGH_PROFILE=dev`; it hasn't run (kubernetes-api
-isn't deployed).
+`TestLiveKubernetesLifecycle` runs only with `TF_ACC=1` and `EZGH_PROFILE=dev`; it hasn't run yet.

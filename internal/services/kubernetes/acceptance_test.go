@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -285,7 +286,6 @@ data "ezghcloud_kubernetes_cluster" "prod" {
 `
 
 func TestAccKubernetesLifecycle(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", "1")
 	f := newFixture(t)
 	// The cluster comes with coredns, as every cluster does; the coredns resource takes it over.
 	config := func(version, cidrs string, max int, cfg, groups, bot string) string {
@@ -363,51 +363,48 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 		}})
 }
 
-// Without EZGHCLOUD_PREVIEW_KUBERNETES=1 the provider serves no Kubernetes resource or data
-// source, and its endpoints description doesn't name the service.
-func TestKubernetesHiddenWithoutPreview(t *testing.T) {
+// The provider serves every Kubernetes resource and data source, and its endpoints description
+// names the service.
+func TestKubernetesIsServed(t *testing.T) {
 	ctx := context.Background()
-	for _, preview := range []string{"", "1"} {
-		t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", preview)
-		p := provider.New("test")()
-		var names []string
-		for _, r := range p.Resources(ctx) {
-			var resp fwresource.MetadataResponse
-			r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
+	p := provider.New("test")()
+	var names []string
+	for _, r := range p.Resources(ctx) {
+		var resp fwresource.MetadataResponse
+		r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+		names = append(names, resp.TypeName)
+	}
+	for _, d := range p.DataSources(ctx) {
+		var resp datasource.MetadataResponse
+		d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+		names = append(names, resp.TypeName)
+	}
+	for _, want := range []string{"ezghcloud_kubernetes_cluster", "ezghcloud_kubernetes_node_group", "ezghcloud_kubernetes_addon", "ezghcloud_kubernetes_access_entry", "ezghcloud_kubernetes_pod_identity_association"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("%s not served: %v", want, names)
 		}
-		for _, d := range p.DataSources(ctx) {
-			var resp datasource.MetadataResponse
-			d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
-		}
-		var schema framework.SchemaResponse
-		p.Schema(ctx, framework.SchemaRequest{}, &schema)
-		described := strings.Contains(schema.Schema.Attributes["endpoints"].GetDescription(), "kubernetes")
-		served := strings.Contains(strings.Join(names, " "), "kubernetes")
-		if served != (preview == "1") || described != (preview == "1") {
-			t.Fatalf("preview %q: served %v, described %v: %v", preview, served, described, names)
-		}
+	}
+	var schema framework.SchemaResponse
+	p.Schema(ctx, framework.SchemaRequest{}, &schema)
+	if !strings.Contains(schema.Schema.Attributes["endpoints"].GetDescription(), "kubernetes") {
+		t.Fatal("endpoints description doesn't name kubernetes")
 	}
 }
 
-// An endpoints.kubernetes override is refused without the preview switch, as an unknown service.
-func TestKubernetesEndpointNeedsPreview(t *testing.T) {
+// An endpoints.kubernetes override is accepted like any other service's.
+func TestKubernetesEndpointOverride(t *testing.T) {
 	ctx := context.Background()
-	for _, preview := range []string{"", "1"} {
-		t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", preview)
-		p := provider.New("test")()
-		var sr framework.SchemaResponse
-		p.Schema(ctx, framework.SchemaRequest{}, &sr)
-		raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"api_token":       tftypes.NewValue(tftypes.String, "token"),
-			"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
-			"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{"kubernetes": tftypes.NewValue(tftypes.String, "https://kubernetes.test")}),
-		})
-		var resp framework.ConfigureResponse
-		p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
-		if resp.Diagnostics.HasError() != (preview == "") {
-			t.Fatalf("preview %q: %v", preview, resp.Diagnostics)
-		}
+	p := provider.New("test")()
+	var sr framework.SchemaResponse
+	p.Schema(ctx, framework.SchemaRequest{}, &sr)
+	raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+		"api_token":       tftypes.NewValue(tftypes.String, "token"),
+		"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
+		"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{"kubernetes": tftypes.NewValue(tftypes.String, "https://kubernetes.test")}),
+	})
+	var resp framework.ConfigureResponse
+	p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
 	}
 }
