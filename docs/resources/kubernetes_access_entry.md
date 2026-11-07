@@ -18,7 +18,7 @@ An access entry: an EZGH principal's identity in a cluster, its Kubernetes group
 ### Required
 
 - `cluster_id` (String) Cluster (kcl_). Changing it replaces the entry.
-- `principal_id` (String) The principal's ID as org-api names it: a user's own ID, a Bot's or SSO user's UUID (not its bot_ or usr_ slug), a grp_ ID for a group. Changing it replaces the entry.
+- `principal_id` (String) The principal's ID: a user's own ID, a Bot's bot_ ID, an SSO user's usr_ ID or a group's grp_ ID. Changing it replaces the entry.
 - `principal_type` (String) user, bot, ssoUser or group. Changing it replaces the entry.
 - `project_id` (String) The cluster's project. Changing it replaces the entry.
 

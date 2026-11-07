@@ -368,21 +368,24 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 func TestKubernetesIsServed(t *testing.T) {
 	ctx := context.Background()
 	p := provider.New("test")()
-	var names []string
+	var resources, dataSources []string
 	for _, r := range p.Resources(ctx) {
 		var resp fwresource.MetadataResponse
 		r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-		names = append(names, resp.TypeName)
+		resources = append(resources, resp.TypeName)
 	}
 	for _, d := range p.DataSources(ctx) {
 		var resp datasource.MetadataResponse
 		d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-		names = append(names, resp.TypeName)
+		dataSources = append(dataSources, resp.TypeName)
 	}
 	for _, want := range []string{"ezghcloud_kubernetes_cluster", "ezghcloud_kubernetes_node_group", "ezghcloud_kubernetes_addon", "ezghcloud_kubernetes_access_entry", "ezghcloud_kubernetes_pod_identity_association"} {
-		if !slices.Contains(names, want) {
-			t.Fatalf("%s not served: %v", want, names)
+		if !slices.Contains(resources, want) {
+			t.Fatalf("resource %s not served: %v", want, resources)
 		}
+	}
+	if !slices.Contains(dataSources, "ezghcloud_kubernetes_cluster") {
+		t.Fatalf("data source ezghcloud_kubernetes_cluster not served: %v", dataSources)
 	}
 	var schema framework.SchemaResponse
 	p.Schema(ctx, framework.SchemaRequest{}, &schema)

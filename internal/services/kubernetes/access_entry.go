@@ -56,7 +56,7 @@ func (*accessEntryResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 		"cluster_id":        schema.StringAttribute{Required: true, Description: "Cluster (kcl_). Changing it replaces the entry.", PlanModifiers: replace},
 		"resource_name":     schema.StringAttribute{Computed: true, Description: "IAM resource name.", PlanModifiers: keepString},
 		"principal_type":    schema.StringAttribute{Required: true, Description: "user, bot, ssoUser or group. Changing it replaces the entry.", PlanModifiers: replace},
-		"principal_id":      schema.StringAttribute{Required: true, Description: "The principal's ID as org-api names it: a user's own ID, a Bot's or SSO user's UUID (not its bot_ or usr_ slug), a grp_ ID for a group. Changing it replaces the entry.", PlanModifiers: replace},
+		"principal_id":      schema.StringAttribute{Required: true, Description: "The principal's ID: a user's own ID, a Bot's bot_ ID, an SSO user's usr_ ID or a group's grp_ ID. Changing it replaces the entry.", PlanModifiers: replace},
 		"username":          schema.StringAttribute{Computed: true, Description: "The principal's Kubernetes user name, ezgh:<principal id>.", PlanModifiers: keepString},
 		"kubernetes_groups": schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: listdefault.StaticValue(types.ListValueMust(types.StringType, []attr.Value{})), Description: "Kubernetes groups the principal is in, for your own RBAC bindings. system: and ezgh: names are reserved."},
 	}, Blocks: map[string]schema.Block{
