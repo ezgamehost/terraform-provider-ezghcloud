@@ -1,6 +1,5 @@
 // Package kubernetes implements EZGH Kubernetes resources: clusters, node groups, add-ons, access
-// entries and pod identity associations. The provider serves them only with
-// EZGHCLOUD_PREVIEW_KUBERNETES=1 until launch.
+// entries and pod identity associations.
 package kubernetes
 
 import (

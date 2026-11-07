@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -120,7 +121,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 				"publicIpv4": "203.0.113.7", "privateAddresses": []any{}, "publicAccessCidrs": []any{"0.0.0.0/0"}}
 			obj["certificateAuthority"], obj["encryptionKey"], obj["nodeFirewall"] = "-----BEGIN CERTIFICATE-----\n", nil, "fwl_123456789abc"
 			obj["oidcIssuer"] = "https://kubernetes-api.ezghcloud.com/oidc/" + slug
-			obj["logging"] = map[string]any{"types": []any{}, "obsProject": nil}
+			obj["logging"], obj["controlPlaneMetrics"] = map[string]any{"types": []any{}, "obsProject": nil}, false
 			obj["maintenanceWindow"] = map[string]any{"day": "sunday", "startHour": 9}
 		case "node-groups":
 			obj["version"], obj["rootVolumeSizeGiB"], obj["labels"], obj["taints"], obj["sshKeyIds"] = "1.36", 20, map[string]any{}, []any{}, []any{}
@@ -133,7 +134,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		for k, v := range body {
 			switch k {
 			case "subnet", "bot", "instanceType", "minSize", "maxSize", "desiredSize", "name", "labels", "taints", "sshKeyIds", "tags", "principal", "kubernetesGroups", "accessPolicies",
-				"namespace", "serviceAccount", "version", "pinned", "configuration", "updateConfig", "logging", "maintenanceWindow":
+				"namespace", "serviceAccount", "version", "pinned", "configuration", "updateConfig", "logging", "controlPlaneMetrics", "maintenanceWindow":
 				obj[k] = v
 			case "publicAccessCidrs":
 				obj["endpoint"].(map[string]any)["publicAccessCidrs"] = v
@@ -231,6 +232,7 @@ resource "ezghcloud_kubernetes_cluster" "prod" {
  subnet_id = "sbn_123456789abc"
  bot_id = "bot_cluster00001"
  public_access_cidrs = [%[2]s]
+ control_plane_metrics = %[7]t
  tags = { team = "web" }
 }
 resource "ezghcloud_kubernetes_node_group" "general" {
@@ -285,14 +287,13 @@ data "ezghcloud_kubernetes_cluster" "prod" {
 `
 
 func TestAccKubernetesLifecycle(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", "1")
 	f := newFixture(t)
 	// The cluster comes with coredns, as every cluster does; the coredns resource takes it over.
-	config := func(version, cidrs string, max int, cfg, groups, bot string) string {
-		return f.provider() + fmt.Sprintf(stack, version, cidrs, max, cfg, groups, bot)
+	config := func(version, cidrs string, max int, cfg, groups, bot string, metrics bool) string {
+		return f.provider() + fmt.Sprintf(stack, version, cidrs, max, cfg, groups, bot, metrics)
 	}
-	before := config("1.36", `"0.0.0.0/0"`, 3, `{"replicas": 1}`, `"ops"`, "bot_checkout0001")
-	after := config("1.37", `"203.0.113.0/24"`, 5, `{ "replicas" : 2 }`, `"ops", "audit"`, "bot_checkout0002")
+	before := config("1.36", `"0.0.0.0/0"`, 3, `{"replicas": 1}`, `"ops"`, "bot_checkout0001", false)
+	after := config("1.37", `"203.0.113.0/24"`, 5, `{ "replicas" : 2 }`, `"ops", "audit"`, "bot_checkout0002", true)
 	c, ng := "ezghcloud_kubernetes_cluster.prod", "ezghcloud_kubernetes_node_group.general"
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories,
 		CheckDestroy: func(*terraform.State) error {
@@ -311,6 +312,7 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 				resource.TestCheckResourceAttr(c, "endpoint_hostname", "kcl_000000000001.k8s.us-west-1.ezghcompute.com"),
 				resource.TestCheckResourceAttr(c, "bootstrap_creator_access", "true"),
 				resource.TestCheckResourceAttr(c, "maintenance_window_day", "sunday"),
+				resource.TestCheckResourceAttr(c, "control_plane_metrics", "false"),
 				resource.TestCheckResourceAttr("data.ezghcloud_kubernetes_cluster.prod", "certificate_authority", "-----BEGIN CERTIFICATE-----\n"),
 				resource.TestCheckResourceAttr(ng, "desired_size", "2"),
 				resource.TestCheckResourceAttr(ng, "autoscaling_group_id", "asg_123456789abc"),
@@ -331,9 +333,11 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 					}
 				}
 			}, Config: before, ConfigPlanChecks: action(ng, plancheck.ResourceActionNoop)},
-			{Config: after, Check: resource.ComposeAggregateTestCheckFunc(
+			{Config: after, ConfigPlanChecks: action(c, plancheck.ResourceActionUpdate), Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr(c, "version", "1.37"),
 				resource.TestCheckResourceAttr(c, "public_access_cidrs.0", "203.0.113.0/24"),
+				resource.TestCheckResourceAttr(c, "control_plane_metrics", "true"),
+				resource.TestCheckResourceAttr("data.ezghcloud_kubernetes_cluster.prod", "control_plane_metrics", "true"),
 				resource.TestCheckResourceAttr(ng, "max_size", "5"),
 				resource.TestCheckResourceAttr("ezghcloud_kubernetes_access_entry.ops", "kubernetes_groups.1", "audit"),
 				resource.TestCheckResourceAttr("ezghcloud_kubernetes_pod_identity_association.checkout", "bot_id", "bot_checkout0002"),
@@ -363,51 +367,51 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 		}})
 }
 
-// Without EZGHCLOUD_PREVIEW_KUBERNETES=1 the provider serves no Kubernetes resource or data
-// source, and its endpoints description doesn't name the service.
-func TestKubernetesHiddenWithoutPreview(t *testing.T) {
+// The provider serves every Kubernetes resource and data source, and its endpoints description
+// names the service.
+func TestKubernetesIsServed(t *testing.T) {
 	ctx := context.Background()
-	for _, preview := range []string{"", "1"} {
-		t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", preview)
-		p := provider.New("test")()
-		var names []string
-		for _, r := range p.Resources(ctx) {
-			var resp fwresource.MetadataResponse
-			r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
+	p := provider.New("test")()
+	var resources, dataSources []string
+	for _, r := range p.Resources(ctx) {
+		var resp fwresource.MetadataResponse
+		r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+		resources = append(resources, resp.TypeName)
+	}
+	for _, d := range p.DataSources(ctx) {
+		var resp datasource.MetadataResponse
+		d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+		dataSources = append(dataSources, resp.TypeName)
+	}
+	for _, want := range []string{"ezghcloud_kubernetes_cluster", "ezghcloud_kubernetes_node_group", "ezghcloud_kubernetes_addon", "ezghcloud_kubernetes_access_entry", "ezghcloud_kubernetes_pod_identity_association"} {
+		if !slices.Contains(resources, want) {
+			t.Fatalf("resource %s not served: %v", want, resources)
 		}
-		for _, d := range p.DataSources(ctx) {
-			var resp datasource.MetadataResponse
-			d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
-		}
-		var schema framework.SchemaResponse
-		p.Schema(ctx, framework.SchemaRequest{}, &schema)
-		described := strings.Contains(schema.Schema.Attributes["endpoints"].GetDescription(), "kubernetes")
-		served := strings.Contains(strings.Join(names, " "), "kubernetes")
-		if served != (preview == "1") || described != (preview == "1") {
-			t.Fatalf("preview %q: served %v, described %v: %v", preview, served, described, names)
-		}
+	}
+	if !slices.Contains(dataSources, "ezghcloud_kubernetes_cluster") {
+		t.Fatalf("data source ezghcloud_kubernetes_cluster not served: %v", dataSources)
+	}
+	var schema framework.SchemaResponse
+	p.Schema(ctx, framework.SchemaRequest{}, &schema)
+	if !strings.Contains(schema.Schema.Attributes["endpoints"].GetDescription(), "kubernetes") {
+		t.Fatal("endpoints description doesn't name kubernetes")
 	}
 }
 
-// An endpoints.kubernetes override is refused without the preview switch, as an unknown service.
-func TestKubernetesEndpointNeedsPreview(t *testing.T) {
+// An endpoints.kubernetes override is accepted like any other service's.
+func TestKubernetesEndpointOverride(t *testing.T) {
 	ctx := context.Background()
-	for _, preview := range []string{"", "1"} {
-		t.Setenv("EZGHCLOUD_PREVIEW_KUBERNETES", preview)
-		p := provider.New("test")()
-		var sr framework.SchemaResponse
-		p.Schema(ctx, framework.SchemaRequest{}, &sr)
-		raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"api_token":       tftypes.NewValue(tftypes.String, "token"),
-			"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
-			"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{"kubernetes": tftypes.NewValue(tftypes.String, "https://kubernetes.test")}),
-		})
-		var resp framework.ConfigureResponse
-		p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
-		if resp.Diagnostics.HasError() != (preview == "") {
-			t.Fatalf("preview %q: %v", preview, resp.Diagnostics)
-		}
+	p := provider.New("test")()
+	var sr framework.SchemaResponse
+	p.Schema(ctx, framework.SchemaRequest{}, &sr)
+	raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+		"api_token":       tftypes.NewValue(tftypes.String, "token"),
+		"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
+		"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{"kubernetes": tftypes.NewValue(tftypes.String, "https://kubernetes.test")}),
+	})
+	var resp framework.ConfigureResponse
+	p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
 	}
 }

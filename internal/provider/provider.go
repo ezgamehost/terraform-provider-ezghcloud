@@ -40,18 +40,13 @@ func (p *cloudProvider) Metadata(_ context.Context, _ framework.MetadataRequest,
 	resp.Version = p.version
 }
 
-// kubernetesPreview is whether EZGH Kubernetes, not launched yet, is served: only with
-// EZGHCLOUD_PREVIEW_KUBERNETES=1 (its tests set it), so releases and their Registry docs leave it out.
-func kubernetesPreview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_KUBERNETES") == "1" }
-
-// wafPreview is the same for EZGH WAF and the lb endpoint only it uses: EZGHCLOUD_PREVIEW_WAF=1.
+// wafPreview is whether EZGH WAF, not launched yet, and the lb endpoint only it uses are served:
+// only with EZGHCLOUD_PREVIEW_WAF=1 (its tests set it), so releases and their Registry docs leave them out.
 func wafPreview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_WAF") == "1" }
 
 // previewed is whether an endpoint key's service is served.
 func previewed(service string) bool {
 	switch service {
-	case "kubernetes":
-		return kubernetesPreview()
 	case "waf", "lb":
 		return wafPreview()
 	}
@@ -59,10 +54,7 @@ func previewed(service string) bool {
 }
 
 func (p *cloudProvider) Schema(_ context.Context, _ framework.SchemaRequest, resp *framework.SchemaResponse) {
-	services := "orgs, compute, network, firewall, blockstore, images, databases, files, dns, certificates"
-	if kubernetesPreview() {
-		services += ", kubernetes"
-	}
+	services := "orgs, compute, network, firewall, blockstore, images, databases, files, dns, certificates, kubernetes"
 	if wafPreview() {
 		services += ", lb, waf"
 	}
@@ -128,9 +120,7 @@ func (p *cloudProvider) Resources(context.Context) []func() resource.Resource {
 	if wafPreview() {
 		out = append(out, waf.Resources()...)
 	}
-	if kubernetesPreview() {
-		out = append(out, kubernetes.Resources()...)
-	}
+	out = append(out, kubernetes.Resources()...)
 	return append(out, compute.Resources()...)
 }
 func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSource {
@@ -143,8 +133,6 @@ func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSou
 	if wafPreview() {
 		out = append(out, waf.DataSources()...)
 	}
-	if kubernetesPreview() {
-		out = append(out, kubernetes.DataSources()...)
-	}
+	out = append(out, kubernetes.DataSources()...)
 	return append(out, compute.DataSources()...)
 }

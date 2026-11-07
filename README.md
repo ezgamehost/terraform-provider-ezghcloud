@@ -8,17 +8,14 @@ there is no published Terraform Registry release yet.
 The provider covers projects, VPCs, subnets, firewalls, SSH keys,
 instances, volumes, databases with their backups, and file systems with their mount targets
 and access points, DNS zones and record sets, Web Certificates domain authorizations
-and certificates, plus IAM bots, groups, policies, memberships, policy
+and certificates, Kubernetes clusters with their node groups, add-ons, access entries and pod
+identity associations, plus IAM bots, groups, policies, memberships, policy
 attachments, API keys, invitations, and federation configuration, with import and
 lookup data sources where supported.
 
-EZGH Kubernetes (clusters, node groups, add-ons, access entries and pod identity associations)
-isn't launched: the provider serves those resources only when `EZGHCLOUD_PREVIEW_KUBERNETES=1` is
-set, so releases and their generated docs leave them out. Its tests set it themselves. At launch,
-drop the gate and regenerate the docs.
-
 EZGH WAF (`ezghcloud_waf`, `ezghcloud_load_balancer_waf`, `ezghcloud_waf_managed_rule_sets`, and the
-`waf` and `lb` endpoint keys) is gated the same way, by `EZGHCLOUD_PREVIEW_WAF=1`, until it launches.
+`waf` and `lb` endpoint keys) is served only when `EZGHCLOUD_PREVIEW_WAF=1` is set, until it launches,
+so releases and their generated docs leave it out.
 
 See the [provider design](docs/superpowers/specs/2026-11-01-terraform-provider-design.md).
 

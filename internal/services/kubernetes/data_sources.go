@@ -37,9 +37,12 @@ func (*clusterDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest
 		case types.SetType:
 			attrs[name] = schema.SetAttribute{Computed: true, ElementType: t.ElemType, Description: desc}
 		default:
-			if a.GetType() == types.Int64Type {
+			switch a.GetType() {
+			case types.Int64Type:
 				attrs[name] = schema.Int64Attribute{Computed: true, Description: desc}
-			} else {
+			case types.BoolType:
+				attrs[name] = schema.BoolAttribute{Computed: true, Description: desc}
+			default:
 				attrs[name] = schema.StringAttribute{Computed: true, Description: desc}
 			}
 		}
