@@ -1,5 +1,5 @@
 // Package waf implements EZGH WAF resources: WAFs, their attachment to load balancers, and the
-// managed rule sets they can run. Served only with EZGHCLOUD_PREVIEW_WAF=1 until launch (Gate 3).
+// managed rule sets they can run.
 package waf
 
 import (

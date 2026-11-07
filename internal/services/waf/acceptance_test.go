@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -249,7 +250,6 @@ resource "ezghcloud_waf" "web" {
 const loginLimit = `{ name = "login", action = "rateLimit", rate_limit = { limit = 100, window_seconds = 60 }, conditions = [{ type = "equals", target = "path", value = "/login" }] }`
 
 func TestAccWAFLifecycle(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_WAF", "1")
 	f := newFixture(t)
 	r := "ezghcloud_waf.web"
 	data := `
@@ -317,7 +317,6 @@ resource "ezghcloud_waf" "web" {
 }
 
 func TestAccLoadBalancerWAF(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_WAF", "1")
 	f := newFixture(t)
 	r := "ezghcloud_load_balancer_waf.web"
 	config := func(waf string) string {
@@ -365,43 +364,42 @@ removed {
 	}})
 }
 
-// Without EZGHCLOUD_PREVIEW_WAF=1 the provider serves no WAF resource or data source, its endpoints
-// description names neither waf nor lb, and an endpoints.waf or endpoints.lb override is refused.
-func TestWAFHiddenWithoutPreview(t *testing.T) {
+// The provider serves every WAF resource and data source, its endpoints description names waf
+// and lb, and endpoints.waf and endpoints.lb overrides are accepted.
+func TestWAFIsServed(t *testing.T) {
 	ctx := context.Background()
-	for _, preview := range []string{"", "1"} {
-		t.Setenv("EZGHCLOUD_PREVIEW_WAF", preview)
-		p := provider.New("test")()
-		var names []string
-		for _, r := range p.Resources(ctx) {
-			var resp fwresource.MetadataResponse
-			r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
+	p := provider.New("test")()
+	var names []string
+	for _, r := range p.Resources(ctx) {
+		var resp fwresource.MetadataResponse
+		r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+		names = append(names, resp.TypeName)
+	}
+	for _, d := range p.DataSources(ctx) {
+		var resp datasource.MetadataResponse
+		d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+		names = append(names, resp.TypeName)
+	}
+	for _, want := range []string{"ezghcloud_waf", "ezghcloud_load_balancer_waf", "ezghcloud_waf_managed_rule_sets"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("%s not served: %v", want, names)
 		}
-		for _, d := range p.DataSources(ctx) {
-			var resp datasource.MetadataResponse
-			d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
-		}
-		var sr framework.SchemaResponse
-		p.Schema(ctx, framework.SchemaRequest{}, &sr)
-		description := sr.Schema.Attributes["endpoints"].GetDescription()
-		described := strings.Contains(description, "waf") || strings.Contains(description, " lb,")
-		served := strings.Contains(strings.Join(names, " "), "waf")
-		if served != (preview == "1") || described != (preview == "1") {
-			t.Fatalf("preview %q: served %v, described %v: %v", preview, served, described, names)
-		}
-		for _, key := range []string{"waf", "lb"} {
-			raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
-				"api_token":       tftypes.NewValue(tftypes.String, "token"),
-				"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
-				"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{key: tftypes.NewValue(tftypes.String, "https://"+key+".test")}),
-			})
-			var resp framework.ConfigureResponse
-			p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
-			if resp.Diagnostics.HasError() != (preview == "") {
-				t.Fatalf("preview %q, endpoints.%s: %v", preview, key, resp.Diagnostics)
-			}
+	}
+	var sr framework.SchemaResponse
+	p.Schema(ctx, framework.SchemaRequest{}, &sr)
+	if d := sr.Schema.Attributes["endpoints"].GetDescription(); !strings.Contains(d, " lb,") || !strings.Contains(d, "waf") {
+		t.Fatalf("endpoints description: %s", d)
+	}
+	for _, key := range []string{"waf", "lb"} {
+		raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+			"api_token":       tftypes.NewValue(tftypes.String, "token"),
+			"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
+			"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{key: tftypes.NewValue(tftypes.String, "https://"+key+".test")}),
+		})
+		var resp framework.ConfigureResponse
+		p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("endpoints.%s: %v", key, resp.Diagnostics)
 		}
 	}
 }

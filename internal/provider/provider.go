@@ -40,24 +40,8 @@ func (p *cloudProvider) Metadata(_ context.Context, _ framework.MetadataRequest,
 	resp.Version = p.version
 }
 
-// wafPreview is whether EZGH WAF, not launched yet, and the lb endpoint only it uses are served:
-// only with EZGHCLOUD_PREVIEW_WAF=1 (its tests set it), so releases and their Registry docs leave them out.
-func wafPreview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_WAF") == "1" }
-
-// previewed is whether an endpoint key's service is served.
-func previewed(service string) bool {
-	switch service {
-	case "waf", "lb":
-		return wafPreview()
-	}
-	return true
-}
-
 func (p *cloudProvider) Schema(_ context.Context, _ framework.SchemaRequest, resp *framework.SchemaResponse) {
-	services := "orgs, compute, network, firewall, blockstore, images, databases, files, dns, certificates, kubernetes"
-	if wafPreview() {
-		services += ", lb, waf"
-	}
+	services := "orgs, compute, network, firewall, blockstore, images, databases, files, dns, certificates, kubernetes, lb, waf"
 	resp.Schema = schema.Schema{Description: "Manage EZGH Cloud infrastructure and IAM through its public APIs.", Attributes: map[string]schema.Attribute{
 		"api_token":       schema.StringAttribute{Optional: true, Sensitive: true, Description: "Customer bearer credential. Defaults to EZGHCLOUD_API_TOKEN. The credential is never stored as a resource attribute."},
 		"organization_id": schema.StringAttribute{Optional: true, Description: "Organization identifier. Defaults to EZGHCLOUD_ORGANIZATION_ID. Use provider aliases for multiple organizations."},
@@ -93,7 +77,7 @@ func (p *cloudProvider) Configure(ctx context.Context, req framework.ConfigureRe
 		resp.Diagnostics.Append(cfg.Endpoints.ElementsAs(ctx, &endpoints, false)...)
 	}
 	for service, endpoint := range endpoints {
-		if _, ok := client.DefaultEndpoints[service]; !ok || !previewed(service) {
+		if _, ok := client.DefaultEndpoints[service]; !ok {
 			resp.Diagnostics.AddError("Unknown API service", fmt.Sprintf("Unsupported endpoint key %q.", service))
 			continue
 		}
@@ -117,9 +101,7 @@ func (p *cloudProvider) Resources(context.Context) []func() resource.Resource {
 	out = append(out, files.Resources()...)
 	out = append(out, dns.Resources()...)
 	out = append(out, certificates.Resources()...)
-	if wafPreview() {
-		out = append(out, waf.Resources()...)
-	}
+	out = append(out, waf.Resources()...)
 	out = append(out, kubernetes.Resources()...)
 	return append(out, compute.Resources()...)
 }
@@ -130,9 +112,7 @@ func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSou
 	out = append(out, databases.DataSources()...)
 	out = append(out, files.DataSources()...)
 	out = append(out, dns.DataSources()...)
-	if wafPreview() {
-		out = append(out, waf.DataSources()...)
-	}
+	out = append(out, waf.DataSources()...)
 	out = append(out, kubernetes.DataSources()...)
 	return append(out, compute.DataSources()...)
 }

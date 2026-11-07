@@ -9,13 +9,9 @@ The provider covers projects, VPCs, subnets, firewalls, SSH keys,
 instances, volumes, databases with their backups, and file systems with their mount targets
 and access points, DNS zones and record sets, Web Certificates domain authorizations
 and certificates, Kubernetes clusters with their node groups, add-ons, access entries and pod
-identity associations, plus IAM bots, groups, policies, memberships, policy
+identity associations, WAFs and their load balancer attachments, plus IAM bots, groups, policies, memberships, policy
 attachments, API keys, invitations, and federation configuration, with import and
 lookup data sources where supported.
-
-EZGH WAF (`ezghcloud_waf`, `ezghcloud_load_balancer_waf`, `ezghcloud_waf_managed_rule_sets`, and the
-`waf` and `lb` endpoint keys) is served only when `EZGHCLOUD_PREVIEW_WAF=1` is set, until it launches,
-so releases and their generated docs leave it out.
 
 See the [provider design](docs/superpowers/specs/2026-11-01-terraform-provider-design.md).
 
