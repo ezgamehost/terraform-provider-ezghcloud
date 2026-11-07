@@ -24,12 +24,13 @@ Read an EZGH Kubernetes cluster by its ID: endpoint_hostname and certificate_aut
 
 - `bot_id` (String) Cluster Bot (bot_): load balancers, volumes and node capacity the cluster makes are made as this Bot. Needs KubernetesClusterAccess, and the caller needs bots.pass on it. It can't change after create: replacing a cluster would lose its workloads, so a change is refused at plan.
 - `certificate_authority` (String) The cluster CA certificate, PEM; null until the cluster is active.
+- `control_plane_metrics` (Boolean) When true, the control plane's apiserver, etcd, scheduler and controller-manager metrics go to the cluster's own project in Obs once a minute, free: an allowlisted set, at most 2,000 series per control-plane member a minute. Default false. Changes in place.
 - `encryption_key_id` (String) Keys key (kms_) Kubernetes Secrets are encrypted with. Left out, an EZGH-managed key. It can't change after create: replacing a cluster would lose its workloads, so a change is refused at plan.
 - `endpoint_hostname` (String) The endpoint's public DNS name, for kubectl.
 - `endpoint_private_hostname` (String) The endpoint's DNS name inside the VPC.
 - `endpoint_public_ipv4` (String) The endpoint's public IPv4 address; null until assigned.
-- `logging_project_id` (String) Project (prj_) whose Obs receives the control-plane logs. Required with logging_types.
-- `logging_types` (Set of String) Control-plane logs sent to logging_project_id's Obs: api, audit, authenticator, controllerManager and scheduler. Billed as log ingest.
+- `logging_project_id` (String) Project (prj_) whose Obs receives the control-plane logs, billed as its log ingest. Required with logging_types.
+- `logging_types` (Set of String) Control-plane log types sent to logging_project_id's Obs: api (kube-apiserver's logs), audit (kube-apiserver's audit log), authenticator (one entry per sign-in: who and whether it succeeded, never the token), controllerManager and scheduler. Billed as that project's log ingest. Changes in place.
 - `maintenance_window_day` (String) Day of the weekly 4-hour maintenance window, monday to sunday. Set with maintenance_window_start_hour; left out at create, EZGH picks one; removed later, the last window stays.
 - `maintenance_window_start_hour` (Number) Start hour (UTC, 0 to 23) of the maintenance window.
 - `name` (String) Cluster name. Changing it replaces the cluster.

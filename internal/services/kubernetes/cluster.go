@@ -43,6 +43,7 @@ type clusterFields struct {
 	ServiceIPv6CIDR         types.String `tfsdk:"service_ipv6_cidr"`
 	LoggingTypes            types.Set    `tfsdk:"logging_types"`
 	LoggingProjectID        types.String `tfsdk:"logging_project_id"`
+	ControlPlaneMetrics     types.Bool   `tfsdk:"control_plane_metrics"`
 	MaintenanceDay          types.String `tfsdk:"maintenance_window_day"`
 	MaintenanceStartHour    types.Int64  `tfsdk:"maintenance_window_start_hour"`
 	Tags                    types.Map    `tfsdk:"tags"`
@@ -72,7 +73,8 @@ type clusterView struct {
 		Types      []string
 		ObsProject *string
 	}
-	MaintenanceWindow struct {
+	ControlPlaneMetrics bool
+	MaintenanceWindow   struct {
 		Day       string
 		StartHour int64
 	}
@@ -110,8 +112,9 @@ func (*clusterResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 		"public_access_cidrs":    schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "IPv4 CIDRs allowed to reach the public endpoint, at most 40. Left out at create, 0.0.0.0/0; removed later, the last value stays. An empty list closes the public endpoint: kubectl then reaches the cluster only from inside the VPC.", PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}},
 		"service_ipv4_cidr":      schema.StringAttribute{Optional: true, Computed: true, Description: "IPv4 range Services get addresses from. Left out, 10.100.0.0/16. " + fixedAtCreate, PlanModifiers: keepString},
 		"service_ipv6_cidr":      computed("IPv6 range Services get addresses from.", true),
-		"logging_types":          schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})), Description: "Control-plane logs sent to logging_project_id's Obs: api, audit, authenticator, controllerManager and scheduler. Billed as log ingest."},
-		"logging_project_id":     schema.StringAttribute{Optional: true, Description: "Project (prj_) whose Obs receives the control-plane logs. Required with logging_types."},
+		"logging_types":          schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})), Description: "Control-plane log types sent to logging_project_id's Obs: api (kube-apiserver's logs), audit (kube-apiserver's audit log), authenticator (one entry per sign-in: who and whether it succeeded, never the token), controllerManager and scheduler. Billed as that project's log ingest. Changes in place."},
+		"logging_project_id":     schema.StringAttribute{Optional: true, Description: "Project (prj_) whose Obs receives the control-plane logs, billed as its log ingest. Required with logging_types."},
+		"control_plane_metrics":  schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "When true, the control plane's apiserver, etcd, scheduler and controller-manager metrics go to the cluster's own project in Obs once a minute, free: an allowlisted set, at most 2,000 series per control-plane member a minute. Default false. Changes in place."},
 		"maintenance_window_day": schema.StringAttribute{Optional: true, Computed: true, Description: "Day of the weekly 4-hour maintenance window, monday to sunday. Set with maintenance_window_start_hour; left out at create, EZGH picks one; removed later, the last window stays.", PlanModifiers: keepString},
 		"maintenance_window_start_hour": schema.Int64Attribute{Optional: true, Computed: true, Description: "Start hour (UTC, 0 to 23) of the maintenance window.",
 			PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}},
@@ -199,6 +202,7 @@ func (r *clusterResource) Create(ctx context.Context, req resource.CreateRequest
 		body["publicAccessCidrs"] = stringsOf(ctx, m.PublicAccessCIDRs, &resp.Diagnostics)
 	}
 	body["logging"] = loggingBody(ctx, m, &resp.Diagnostics)
+	body["controlPlaneMetrics"] = m.ControlPlaneMetrics.ValueBool()
 	if known(m.MaintenanceDay) && known(m.MaintenanceStartHour) {
 		body["maintenanceWindow"] = map[string]any{"day": m.MaintenanceDay.ValueString(), "startHour": m.MaintenanceStartHour.ValueInt64()}
 	}
@@ -251,6 +255,9 @@ func (r *clusterResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	if !m.LoggingTypes.Equal(old.LoggingTypes) || !m.LoggingProjectID.Equal(old.LoggingProjectID) {
 		body["logging"] = loggingBody(ctx, m, &resp.Diagnostics)
+	}
+	if known(m.ControlPlaneMetrics) && !m.ControlPlaneMetrics.Equal(old.ControlPlaneMetrics) {
+		body["controlPlaneMetrics"] = m.ControlPlaneMetrics.ValueBool()
 	}
 	if known(m.MaintenanceDay) && known(m.MaintenanceStartHour) && (!m.MaintenanceDay.Equal(old.MaintenanceDay) || !m.MaintenanceStartHour.Equal(old.MaintenanceStartHour)) {
 		body["maintenanceWindow"] = map[string]any{"day": m.MaintenanceDay.ValueString(), "startHour": m.MaintenanceStartHour.ValueInt64()}
@@ -317,6 +324,7 @@ func (f *clusterFields) fill(ctx context.Context, v clusterView, org string) {
 	f.PublicAccessCIDRs = listValue(ctx, v.Endpoint.PublicAccessCidrs)
 	f.ServiceIPv4CIDR, f.ServiceIPv6CIDR = types.StringValue(v.ServiceIpv4Cidr), types.StringValue(v.ServiceIpv6Cidr)
 	f.LoggingTypes, f.LoggingProjectID = setValue(ctx, v.Logging.Types), types.StringPointerValue(v.Logging.ObsProject)
+	f.ControlPlaneMetrics = types.BoolValue(v.ControlPlaneMetrics)
 	f.MaintenanceDay, f.MaintenanceStartHour = types.StringValue(v.MaintenanceWindow.Day), types.Int64Value(v.MaintenanceWindow.StartHour)
 	f.Tags, f.Status = mapValue(ctx, v.Tags), types.StringValue(v.Status)
 	f.EndpointHostname, f.EndpointPrivateHostname = types.StringValue(v.Endpoint.Hostname), types.StringValue(v.Endpoint.PrivateHostname)

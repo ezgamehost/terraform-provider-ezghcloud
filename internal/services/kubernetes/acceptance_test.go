@@ -121,7 +121,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 				"publicIpv4": "203.0.113.7", "privateAddresses": []any{}, "publicAccessCidrs": []any{"0.0.0.0/0"}}
 			obj["certificateAuthority"], obj["encryptionKey"], obj["nodeFirewall"] = "-----BEGIN CERTIFICATE-----\n", nil, "fwl_123456789abc"
 			obj["oidcIssuer"] = "https://kubernetes-api.ezghcloud.com/oidc/" + slug
-			obj["logging"] = map[string]any{"types": []any{}, "obsProject": nil}
+			obj["logging"], obj["controlPlaneMetrics"] = map[string]any{"types": []any{}, "obsProject": nil}, false
 			obj["maintenanceWindow"] = map[string]any{"day": "sunday", "startHour": 9}
 		case "node-groups":
 			obj["version"], obj["rootVolumeSizeGiB"], obj["labels"], obj["taints"], obj["sshKeyIds"] = "1.36", 20, map[string]any{}, []any{}, []any{}
@@ -134,7 +134,7 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		for k, v := range body {
 			switch k {
 			case "subnet", "bot", "instanceType", "minSize", "maxSize", "desiredSize", "name", "labels", "taints", "sshKeyIds", "tags", "principal", "kubernetesGroups", "accessPolicies",
-				"namespace", "serviceAccount", "version", "pinned", "configuration", "updateConfig", "logging", "maintenanceWindow":
+				"namespace", "serviceAccount", "version", "pinned", "configuration", "updateConfig", "logging", "controlPlaneMetrics", "maintenanceWindow":
 				obj[k] = v
 			case "publicAccessCidrs":
 				obj["endpoint"].(map[string]any)["publicAccessCidrs"] = v
@@ -232,6 +232,7 @@ resource "ezghcloud_kubernetes_cluster" "prod" {
  subnet_id = "sbn_123456789abc"
  bot_id = "bot_cluster00001"
  public_access_cidrs = [%[2]s]
+ control_plane_metrics = %[7]t
  tags = { team = "web" }
 }
 resource "ezghcloud_kubernetes_node_group" "general" {
@@ -288,11 +289,11 @@ data "ezghcloud_kubernetes_cluster" "prod" {
 func TestAccKubernetesLifecycle(t *testing.T) {
 	f := newFixture(t)
 	// The cluster comes with coredns, as every cluster does; the coredns resource takes it over.
-	config := func(version, cidrs string, max int, cfg, groups, bot string) string {
-		return f.provider() + fmt.Sprintf(stack, version, cidrs, max, cfg, groups, bot)
+	config := func(version, cidrs string, max int, cfg, groups, bot string, metrics bool) string {
+		return f.provider() + fmt.Sprintf(stack, version, cidrs, max, cfg, groups, bot, metrics)
 	}
-	before := config("1.36", `"0.0.0.0/0"`, 3, `{"replicas": 1}`, `"ops"`, "bot_checkout0001")
-	after := config("1.37", `"203.0.113.0/24"`, 5, `{ "replicas" : 2 }`, `"ops", "audit"`, "bot_checkout0002")
+	before := config("1.36", `"0.0.0.0/0"`, 3, `{"replicas": 1}`, `"ops"`, "bot_checkout0001", false)
+	after := config("1.37", `"203.0.113.0/24"`, 5, `{ "replicas" : 2 }`, `"ops", "audit"`, "bot_checkout0002", true)
 	c, ng := "ezghcloud_kubernetes_cluster.prod", "ezghcloud_kubernetes_node_group.general"
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories,
 		CheckDestroy: func(*terraform.State) error {
@@ -311,6 +312,7 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 				resource.TestCheckResourceAttr(c, "endpoint_hostname", "kcl_000000000001.k8s.us-west-1.ezghcompute.com"),
 				resource.TestCheckResourceAttr(c, "bootstrap_creator_access", "true"),
 				resource.TestCheckResourceAttr(c, "maintenance_window_day", "sunday"),
+				resource.TestCheckResourceAttr(c, "control_plane_metrics", "false"),
 				resource.TestCheckResourceAttr("data.ezghcloud_kubernetes_cluster.prod", "certificate_authority", "-----BEGIN CERTIFICATE-----\n"),
 				resource.TestCheckResourceAttr(ng, "desired_size", "2"),
 				resource.TestCheckResourceAttr(ng, "autoscaling_group_id", "asg_123456789abc"),
@@ -331,9 +333,11 @@ func TestAccKubernetesLifecycle(t *testing.T) {
 					}
 				}
 			}, Config: before, ConfigPlanChecks: action(ng, plancheck.ResourceActionNoop)},
-			{Config: after, Check: resource.ComposeAggregateTestCheckFunc(
+			{Config: after, ConfigPlanChecks: action(c, plancheck.ResourceActionUpdate), Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr(c, "version", "1.37"),
 				resource.TestCheckResourceAttr(c, "public_access_cidrs.0", "203.0.113.0/24"),
+				resource.TestCheckResourceAttr(c, "control_plane_metrics", "true"),
+				resource.TestCheckResourceAttr("data.ezghcloud_kubernetes_cluster.prod", "control_plane_metrics", "true"),
 				resource.TestCheckResourceAttr(ng, "max_size", "5"),
 				resource.TestCheckResourceAttr("ezghcloud_kubernetes_access_entry.ops", "kubernetes_groups.1", "audit"),
 				resource.TestCheckResourceAttr("ezghcloud_kubernetes_pod_identity_association.checkout", "bot_id", "bot_checkout0002"),

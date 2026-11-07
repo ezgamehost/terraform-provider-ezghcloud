@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -344,5 +345,68 @@ func TestAddonExistsOutsideDefaultsIsRefused(t *testing.T) {
 	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: plan.Schema, Raw: plan.Raw}}, &resp)
 	if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "addon_exists") || listed.Load() {
 		t.Fatalf("listed=%v %v", listed.Load(), resp.Diagnostics)
+	}
+}
+
+// control_plane_metrics goes in the create body, in a PATCH only when it changes, and is read back.
+func TestClusterControlPlaneMetrics(t *testing.T) {
+	ctx := context.Background()
+	var bodies []map[string]any
+	metrics := false
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" || r.Method == "PATCH" {
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			bodies = append(bodies, b)
+			if v, ok := b["controlPlaneMetrics"].(bool); ok {
+				metrics = v
+			}
+			w.Header().Set("Location", "/v1/organizations/org_test/operations/op1")
+			w.WriteHeader(202)
+			_, _ = w.Write([]byte(`{"id":"op1","status":"queued","target":{"id":"uuid","resourceName":"ezgh:us-west-1:org_test:prj_test:kcl_123456789abc"}}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/operations/") {
+			_, _ = w.Write([]byte(`{"id":"op1","status":"succeeded"}`))
+			return
+		}
+		m, _ := json.Marshal(metrics)
+		_, _ = w.Write([]byte(`{"slug":"kcl_123456789abc","status":"active","version":"1.36","endpoint":{"publicAccessCidrs":[]},"logging":{"types":[]},"controlPlaneMetrics":` + string(m) + `}`))
+	})
+	r := &clusterResource{client: c}
+	m := activeCluster()
+	m.ID, m.OrganizationID, m.Status, m.OperationID, m.OperationTimeout = types.StringUnknown(), types.StringUnknown(), types.StringUnknown(), types.StringUnknown(), types.StringValue("1m")
+	m.ControlPlaneMetrics = types.BoolValue(true)
+	plan := asState(t, r, &m)
+	created := resource.CreateResponse{State: tfsdk.State{Schema: plan.Schema}}
+	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Schema: plan.Schema, Raw: plan.Raw}}, &created)
+	var got clusterModel
+	created.State.Get(ctx, &got)
+	if created.Diagnostics.HasError() || bodies[0]["controlPlaneMetrics"] != true || !got.ControlPlaneMetrics.ValueBool() {
+		t.Fatalf("create: %v %v %v", created.Diagnostics, bodies, got.ControlPlaneMetrics)
+	}
+	update := func(next clusterModel) clusterModel {
+		p := asState(t, r, &next)
+		resp := resource.UpdateResponse{State: created.State}
+		r.Update(ctx, resource.UpdateRequest{Plan: tfsdk.Plan{Schema: p.Schema, Raw: p.Raw}, State: created.State}, &resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatal(resp.Diagnostics)
+		}
+		var out clusterModel
+		resp.State.Get(ctx, &out)
+		created.State = resp.State
+		return out
+	}
+	tagged := got
+	tagged.Tags = types.MapValueMust(types.StringType, map[string]attr.Value{"team": types.StringValue("web")})
+	got = update(tagged)
+	if _, sent := bodies[1]["controlPlaneMetrics"]; sent {
+		t.Fatalf("unchanged control_plane_metrics sent: %v", bodies[1])
+	}
+	off := got
+	off.ControlPlaneMetrics = types.BoolValue(false)
+	got = update(off)
+	if len(bodies[2]) != 1 || bodies[2]["controlPlaneMetrics"] != false || got.ControlPlaneMetrics.ValueBool() {
+		t.Fatalf("turning off: %v %v", bodies[2], got.ControlPlaneMetrics)
 	}
 }

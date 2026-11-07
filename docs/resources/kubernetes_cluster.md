@@ -25,9 +25,10 @@ An EZGH Kubernetes cluster: a Kubernetes control plane EZGH runs, reached at one
 ### Optional
 
 - `bootstrap_creator_access` (Boolean) Give the caller who creates the cluster an access entry with cluster admin. It can't change after create: replacing a cluster would lose its workloads, so a change is refused at plan.
+- `control_plane_metrics` (Boolean) When true, the control plane's apiserver, etcd, scheduler and controller-manager metrics go to the cluster's own project in Obs once a minute, free: an allowlisted set, at most 2,000 series per control-plane member a minute. Default false. Changes in place.
 - `encryption_key_id` (String) Keys key (kms_) Kubernetes Secrets are encrypted with. Left out, an EZGH-managed key. It can't change after create: replacing a cluster would lose its workloads, so a change is refused at plan.
-- `logging_project_id` (String) Project (prj_) whose Obs receives the control-plane logs. Required with logging_types.
-- `logging_types` (Set of String) Control-plane logs sent to logging_project_id's Obs: api, audit, authenticator, controllerManager and scheduler. Billed as log ingest.
+- `logging_project_id` (String) Project (prj_) whose Obs receives the control-plane logs, billed as its log ingest. Required with logging_types.
+- `logging_types` (Set of String) Control-plane log types sent to logging_project_id's Obs: api (kube-apiserver's logs), audit (kube-apiserver's audit log), authenticator (one entry per sign-in: who and whether it succeeded, never the token), controllerManager and scheduler. Billed as that project's log ingest. Changes in place.
 - `maintenance_window_day` (String) Day of the weekly 4-hour maintenance window, monday to sunday. Set with maintenance_window_start_hour; left out at create, EZGH picks one; removed later, the last window stays.
 - `maintenance_window_start_hour` (Number) Start hour (UTC, 0 to 23) of the maintenance window.
 - `operation_timeout` (String) Maximum wait for each asynchronous operation, for example 45m.
