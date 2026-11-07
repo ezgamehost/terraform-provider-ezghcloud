@@ -17,6 +17,7 @@ import (
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/iam"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/kubernetes"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/network"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/waf"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	framework "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -44,7 +45,7 @@ func (p *cloudProvider) Metadata(_ context.Context, _ framework.MetadataRequest,
 func kubernetesPreview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_KUBERNETES") == "1" }
 
 func (p *cloudProvider) Schema(_ context.Context, _ framework.SchemaRequest, resp *framework.SchemaResponse) {
-	services := "orgs, compute, network, firewall, blockstore, images, databases, files, dns, certificates"
+	services := "orgs, compute, network, firewall, blockstore, images, databases, files, dns, certificates, lb, waf"
 	if kubernetesPreview() {
 		services += ", kubernetes"
 	}
@@ -107,6 +108,7 @@ func (p *cloudProvider) Resources(context.Context) []func() resource.Resource {
 	out = append(out, files.Resources()...)
 	out = append(out, dns.Resources()...)
 	out = append(out, certificates.Resources()...)
+	out = append(out, waf.Resources()...)
 	if kubernetesPreview() {
 		out = append(out, kubernetes.Resources()...)
 	}
@@ -119,6 +121,7 @@ func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSou
 	out = append(out, databases.DataSources()...)
 	out = append(out, files.DataSources()...)
 	out = append(out, dns.DataSources()...)
+	out = append(out, waf.DataSources()...)
 	if kubernetesPreview() {
 		out = append(out, kubernetes.DataSources()...)
 	}
