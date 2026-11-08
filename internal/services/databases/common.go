@@ -180,3 +180,34 @@ func importProject(ctx context.Context, req resource.ImportStateRequest, resp *r
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root(k), parts[i])...)
 	}
 }
+
+// deletePoll is how often a delete already in progress is re-read.
+var deletePoll = 2 * time.Second
+
+// waitDeleting waits out a delete an earlier apply started (DELETE answered 409 operation_in_progress).
+// It returns the GET's error once the database is gone, or busy when it isn't deleting.
+func waitDeleting(ctx context.Context, c *client.Client, svc, p string, busy error) error {
+	for {
+		out, err := c.Do(ctx, svc, "GET", p, nil)
+		if err != nil {
+			return err
+		}
+		var v struct{ Status string }
+		if err = out.Decode(&v); err != nil {
+			return err
+		}
+		if v.Status != "deleting" {
+			return busy
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(deletePoll):
+		}
+	}
+}
+
+func deleteInProgress(err error) bool {
+	var e *client.Error
+	return errors.As(err, &e) && e.StatusCode == 409 && e.Code == "operation_in_progress"
+}

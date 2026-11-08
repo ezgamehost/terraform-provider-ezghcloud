@@ -421,6 +421,9 @@ func (r *databaseResource) Delete(ctx context.Context, req resource.DeleteReques
 	}
 	p := client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "databases", m.ID.ValueString())
 	out, err := r.client.Do(ctx, service, "DELETE", p+"?finalBackup="+final, nil)
+	if deleteInProgress(err) {
+		err = waitDeleting(ctx, r.client, service, p, err)
+	}
 	if err != nil {
 		missing, e := confirmedMissing(ctx, r.client, m.ProjectID.ValueString(), err)
 		if !missing {

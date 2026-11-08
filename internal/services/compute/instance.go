@@ -258,7 +258,11 @@ func (r *instanceResource) Delete(ctx context.Context, req resource.DeleteReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.Do(ctx, "compute", "DELETE", client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "instances", m.ID.ValueString()), nil)
+	p := client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "instances", m.ID.ValueString())
+	out, err := r.client.Do(ctx, "compute", "DELETE", p, nil)
+	if deleteInProgress(err) {
+		err = waitDeleting(ctx, r.client, "compute", p, err)
+	}
 	if err != nil {
 		missing, e := confirmedMissing(ctx, r.client, m.ProjectID.ValueString(), err)
 		if !missing {

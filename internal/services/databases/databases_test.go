@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -400,5 +401,37 @@ func TestFailedLogicalDatabasePlansReplace(t *testing.T) {
 	resp.Plan.GetAttribute(ctx, path.Root("status"), &status)
 	if resp.Diagnostics.HasError() || len(resp.RequiresReplace) != 1 || !status.IsUnknown() {
 		t.Fatalf("%v %v %v", resp.Diagnostics, resp.RequiresReplace, status)
+	}
+}
+
+func TestDatabaseDeleteWaitsOut(t *testing.T) {
+	deletePoll = time.Millisecond
+	ctx := context.Background()
+	deletes, gets := 0, 0
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "DELETE":
+			deletes++
+			w.WriteHeader(409)
+			_, _ = w.Write([]byte(`{"error":{"code":"operation_in_progress","message":"busy"}}`))
+		case strings.HasSuffix(r.URL.Path, "/projects/prj_test"):
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			gets++
+			if gets > 2 {
+				w.WriteHeader(404)
+				_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"gone"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"deleting"}`))
+		}
+	})
+	r := &databaseResource{client: c}
+	m := available(ctx)
+	m.OperationTimeout = types.StringValue("5s")
+	resp := resource.DeleteResponse{}
+	r.Delete(ctx, resource.DeleteRequest{State: asState(t, r, &m)}, &resp)
+	if resp.Diagnostics.HasError() || deletes != 1 || gets != 3 {
+		t.Fatalf("diag=%v deletes=%d gets=%d", resp.Diagnostics, deletes, gets)
 	}
 }

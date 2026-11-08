@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -202,5 +203,72 @@ func TestRefreshAfterOutOfBandDeleteWarns(t *testing.T) {
 	}
 	if resp.Diagnostics.HasError() || got.Status.ValueString() != "deleting" {
 		t.Fatalf("diag=%v status=%s", resp.Diagnostics, got.Status.ValueString())
+	}
+}
+
+// deleteWaitsOutServer answers DELETE 409, then GET with status for two reads, then 404; the project always answers.
+func deleteWaitsOutServer(status string, deletes, gets *int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "DELETE":
+			*deletes++
+			w.WriteHeader(409)
+			_, _ = w.Write([]byte(`{"error":{"code":"operation_in_progress","message":"busy"}}`))
+		case strings.HasSuffix(r.URL.Path, "/projects/prj_test"):
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			*gets++
+			if *gets > 2 {
+				w.WriteHeader(404)
+				_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"gone"}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"` + status + `"}`))
+		}
+	}
+}
+
+func TestInstanceDeleteWaitsOutTerminating(t *testing.T) {
+	deletePoll = time.Millisecond
+	ctx := context.Background()
+	deletes, gets := 0, 0
+	r := &instanceResource{client: testClient(t, deleteWaitsOutServer("terminating", &deletes, &gets))}
+	m := instanceModel{}
+	m.fromAPI(ctx, instanceView{Slug: "ins_123456789abc"}, "org_test")
+	m.RootVolume, m.Interfaces = types.ObjectNull(rootVolumeTypes), types.ListNull(types.ObjectType{AttrTypes: interfaceTypes})
+	m.ProjectID, m.OperationTimeout = types.StringValue("prj_test"), types.StringValue("5s")
+	state := tfsdk.State{Schema: resourcePlan(t, r, &m).Schema, Raw: resourcePlan(t, r, &m).Raw}
+	resp := resource.DeleteResponse{}
+	r.Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+	if resp.Diagnostics.HasError() || deletes != 1 || gets != 3 {
+		t.Fatalf("diag=%v deletes=%d gets=%d", resp.Diagnostics, deletes, gets)
+	}
+}
+
+func TestVolumeDeleteWaitsOutDeleting(t *testing.T) {
+	deletePoll = time.Millisecond
+	ctx := context.Background()
+	deletes, gets := 0, 0
+	r := &volumeResource{client: testClient(t, deleteWaitsOutServer("deleting", &deletes, &gets))}
+	m := volumeModel{ID: types.StringValue("vol_123456789abc"), OrganizationID: types.StringValue("org_test"), ProjectID: types.StringValue("prj_test"), Tags: mapValue(ctx, nil), DeletionProtection: types.BoolValue(false), OperationTimeout: types.StringValue("5s")}
+	state := tfsdk.State{Schema: resourcePlan(t, r, &m).Schema, Raw: resourcePlan(t, r, &m).Raw}
+	resp := resource.DeleteResponse{}
+	r.Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+	if resp.Diagnostics.HasError() || deletes != 1 || gets != 3 {
+		t.Fatalf("diag=%v deletes=%d gets=%d", resp.Diagnostics, deletes, gets)
+	}
+}
+
+func TestVolumeDeleteBusyOtherStatusKeeps409(t *testing.T) {
+	deletePoll = time.Millisecond
+	ctx := context.Background()
+	deletes, gets := 0, 0
+	r := &volumeResource{client: testClient(t, deleteWaitsOutServer("available", &deletes, &gets))}
+	m := volumeModel{ID: types.StringValue("vol_123456789abc"), OrganizationID: types.StringValue("org_test"), ProjectID: types.StringValue("prj_test"), Tags: mapValue(ctx, nil), DeletionProtection: types.BoolValue(false), OperationTimeout: types.StringValue("5s")}
+	state := tfsdk.State{Schema: resourcePlan(t, r, &m).Schema, Raw: resourcePlan(t, r, &m).Raw}
+	resp := resource.DeleteResponse{}
+	r.Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+	if !resp.Diagnostics.HasError() || gets != 1 {
+		t.Fatalf("diag=%v gets=%d", resp.Diagnostics, gets)
 	}
 }

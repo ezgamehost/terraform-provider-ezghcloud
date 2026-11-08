@@ -233,7 +233,11 @@ func (r *volumeResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.Do(ctx, "blockstore", "DELETE", client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "volumes", m.ID.ValueString()), nil)
+	p := client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "volumes", m.ID.ValueString())
+	out, err := r.client.Do(ctx, "blockstore", "DELETE", p, nil)
+	if deleteInProgress(err) {
+		err = waitDeleting(ctx, r.client, "blockstore", p, err)
+	}
 	if err != nil {
 		missing, e := confirmedMissing(ctx, r.client, m.ProjectID.ValueString(), err)
 		if !missing {
