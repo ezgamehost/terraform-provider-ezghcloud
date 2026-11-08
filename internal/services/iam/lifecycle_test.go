@@ -122,3 +122,33 @@ func TestRelationshipChangesOnlyOneMemberWithETag(t *testing.T) {
 		t.Fatalf("calls=%d err=%v", calls, err)
 	}
 }
+
+func TestDeleteOfMissingEntitySucceeds(t *testing.T) {
+	for _, orgStatus := range []int{http.StatusOK, http.StatusNotFound} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"gone"}}`))
+				return
+			}
+			w.WriteHeader(orgStatus)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"gone"}}`))
+		}))
+		ctx := context.Background()
+		d := definitions()["bot"]
+		v := nullValues(d)
+		v["id"] = types.StringValue("bot-id")
+		v["organization_id"] = types.StringValue("org_test")
+		raw, err := objectValue(d, v).ToTerraformValue(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := &iamResource{definition: d, client: client.New(client.Config{OrganizationID: "org_test", Endpoints: map[string]string{"orgs": server.URL}})}
+		resp := resource.DeleteResponse{}
+		r.Delete(ctx, resource.DeleteRequest{State: tfsdk.State{Schema: schemaFor("bot"), Raw: raw}}, &resp)
+		server.Close()
+		if resp.Diagnostics.HasError() != (orgStatus == http.StatusNotFound) {
+			t.Fatalf("org %d: diag=%v", orgStatus, resp.Diagnostics)
+		}
+	}
+}

@@ -147,6 +147,11 @@ func (r *iamResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 		_, e = changeRelation(ctx, r.client, r.definition, v, http.MethodDelete)
 	} else {
 		e = deleteEntity(ctx, r.client, r.definition, v)
+		if missing, cerr := confirmedMissingParent(ctx, r.client, e); missing {
+			e = nil
+		} else if cerr != nil {
+			e = cerr
+		}
 	}
 	if e != nil {
 		resp.Diagnostics.AddError("Unable to delete IAM resource", e.Error())
