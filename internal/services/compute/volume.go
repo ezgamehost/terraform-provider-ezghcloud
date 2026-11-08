@@ -148,7 +148,7 @@ func (r *volumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 			return
 		}
 		if m.OperationID.ValueString() == "" {
-			resp.Diagnostics.AddError("Volume operation in progress", "The volume is transitional and its operation ID is unavailable. Retry refresh after the operation completes.")
+			resp.Diagnostics.AddWarning("Volume operation in progress", "The volume is transitional and its operation ID is unavailable. Retry refresh after the operation completes.")
 			return
 		}
 		if err = r.client.Wait(waitCtx, "blockstore", client.OrgPath(r.client.OrganizationID, "operations", m.OperationID.ValueString())); err != nil {
@@ -163,7 +163,7 @@ func (r *volumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 		m.fromAPI(ctx, v, r.client.OrganizationID)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 		if v.Status == "creating" || v.Status == "deleting" {
-			resp.Diagnostics.AddError("Volume operation in progress", "The volume is still transitional. Retry refresh after its current operation completes.")
+			resp.Diagnostics.AddWarning("Volume operation in progress", "The volume is still transitional. Retry refresh after its current operation completes.")
 		}
 	}
 }

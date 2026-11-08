@@ -180,3 +180,27 @@ func TestRefreshResumesPendingVolumeOperation(t *testing.T) {
 		t.Fatalf("pending create was not reconciled: operations=%d status=%s", operations, got.Status.ValueString())
 	}
 }
+
+func TestRefreshAfterOutOfBandDeleteWarns(t *testing.T) {
+	ctx := context.Background()
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/operations/") {
+			_, _ = w.Write([]byte(`{"id":"op1","status":"succeeded"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "uuid", "slug": "vol_123456789abc", "name": "disk", "volumeType": "gp1", "sizeBytes": "1073741824", "iops": 1000, "throughputMBps": 100, "deletionProtection": false, "tags": map[string]string{}, "status": "deleting"})
+	})
+	r := &volumeResource{client: c}
+	m := volumeModel{ID: types.StringValue("vol_123456789abc"), OrganizationID: types.StringValue("org_test"), ProjectID: types.StringValue("prj_test"), Name: types.StringValue("disk"), VolumeType: types.StringValue("gp1"), SizeBytes: types.StringValue("1073741824"), IOPS: types.Int64Value(1000), ThroughputMBps: types.Int64Value(100), Tags: mapValue(ctx, nil), DeletionProtection: types.BoolValue(false), Status: types.StringValue("creating"), OperationID: types.StringValue("op1"), OperationTimeout: types.StringValue("1s")}
+	p := resourcePlan(t, r, &m)
+	state := tfsdk.State{Schema: p.Schema, Raw: p.Raw}
+	resp := resource.ReadResponse{State: state}
+	r.Read(ctx, resource.ReadRequest{State: state}, &resp)
+	var got volumeModel
+	if d := resp.State.Get(ctx, &got); d.HasError() {
+		t.Fatal(d)
+	}
+	if resp.Diagnostics.HasError() || got.Status.ValueString() != "deleting" {
+		t.Fatalf("diag=%v status=%s", resp.Diagnostics, got.Status.ValueString())
+	}
+}

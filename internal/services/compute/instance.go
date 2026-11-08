@@ -200,7 +200,7 @@ func (r *instanceResource) Read(ctx context.Context, req resource.ReadRequest, r
 			return
 		}
 		if m.OperationID.ValueString() == "" {
-			resp.Diagnostics.AddError("Instance operation in progress", "The instance is transitional and its operation ID is unavailable. Retry refresh after the operation completes.")
+			resp.Diagnostics.AddWarning("Instance operation in progress", "The instance is transitional and its operation ID is unavailable. Retry refresh after the operation completes.")
 			return
 		}
 		if err = r.client.Wait(waitCtx, "compute", client.OrgPath(r.client.OrganizationID, "operations", m.OperationID.ValueString())); err != nil {
@@ -215,7 +215,7 @@ func (r *instanceResource) Read(ctx context.Context, req resource.ReadRequest, r
 		m.fromAPI(ctx, v, r.client.OrganizationID)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 		if transitionalInstance(v.Status) {
-			resp.Diagnostics.AddError("Instance operation in progress", "The instance is still transitional. Retry refresh after its current operation completes.")
+			resp.Diagnostics.AddWarning("Instance operation in progress", "The instance is still transitional. Retry refresh after its current operation completes.")
 		}
 	}
 }
