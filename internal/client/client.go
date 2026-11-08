@@ -160,17 +160,31 @@ func (c *Client) DoWithHeaders(ctx context.Context, service, method, path string
 			}
 			req.Header[k] = values
 		}
+		// A lost answer is resent only when the server can dedupe it: reads, or a POST carrying its key.
+		resend := attempt < 3 && (method == http.MethodGet || method == http.MethodHead || (method == http.MethodPost && req.Header.Get("Idempotency-Key") != ""))
 		raw, err := c.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			return nil, errors.New("API request failed before a response was received; refresh state before retrying")
+			if !resend {
+				return nil, errors.New("API request failed before a response was received; refresh state before retrying")
+			}
+			if err := sleep(ctx, time.Duration(attempt+1)*time.Second); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		data, readErr := io.ReadAll(io.LimitReader(raw.Body, 16*1024*1024+1))
 		raw.Body.Close()
 		if readErr != nil {
-			return nil, errors.New("failed reading API response; refresh state before retrying")
+			if !resend {
+				return nil, errors.New("failed reading API response; refresh state before retrying")
+			}
+			if err := sleep(ctx, time.Duration(attempt+1)*time.Second); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if len(data) > 16*1024*1024 {
 			return nil, errors.New("API response exceeds 16 MiB")
@@ -201,7 +215,7 @@ func (c *Client) DoWithHeaders(ctx context.Context, service, method, path string
 			}
 		}
 		safe := method == http.MethodGet || method == http.MethodHead || method == http.MethodPost
-		if !safe || attempt == 3 || (raw.StatusCode != 429 && raw.StatusCode != 503) || apiErr.Code == "quota_exceeded" {
+		if !safe || attempt == 3 || (raw.StatusCode != 429 && raw.StatusCode != 503 && apiErr.Code != "idempotency_in_progress") || apiErr.Code == "quota_exceeded" {
 			return nil, apiErr
 		}
 		delay := retryDelay(raw.Header, time.Duration(attempt+1)*time.Second)

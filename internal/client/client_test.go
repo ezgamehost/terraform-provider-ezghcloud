@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -163,5 +165,60 @@ func TestAccessDeniedNamesRequiredPermissionWithoutEchoingMessage(t *testing.T) 
 	_, err := c.Do(context.Background(), "orgs", "GET", "/bots", nil)
 	if err == nil || !strings.Contains(err.Error(), "bots.create") || strings.Contains(err.Error(), "secret-token") {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestTransportErrorRetriesPostWithSameKey(t *testing.T) {
+	var mu sync.Mutex // the hijacked call gives the client no happens-before edge
+	var keys []string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		n := len(keys)
+		mu.Unlock()
+		switch n {
+		case 1:
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			conn.Close()
+		case 2:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(409)
+			w.Write([]byte(`{"error":{"code":"idempotency_in_progress","message":"x"}}`))
+		default:
+			w.WriteHeader(201)
+		}
+	}))
+	defer s.Close()
+	c := New(Config{Token: "secret", Endpoints: map[string]string{"compute": s.URL}})
+	resp, err := c.Do(context.Background(), "compute", "POST", "/instances", map[string]string{"name": "a"})
+	mu.Lock()
+	defer mu.Unlock()
+	if err != nil || resp.StatusCode != 201 || len(keys) != 3 {
+		t.Fatalf("response=%v err=%v calls=%d", resp, err, len(keys))
+	}
+	if keys[0] == "" || keys[0] != keys[1] || keys[1] != keys[2] {
+		t.Fatalf("idempotency keys differ: %q", keys)
+	}
+}
+
+func TestTransportErrorNeverResendsKeylessPost(t *testing.T) {
+	var calls atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("Idempotency-Key") != "" {
+			t.Error("key sent")
+		}
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		conn.Close()
+	}))
+	defer s.Close()
+	c := New(Config{Token: "secret", Endpoints: map[string]string{"compute": s.URL}})
+	_, err := c.DoWithHeaders(context.Background(), "compute", "POST", "/instances/i/actions", nil, http.Header{"Idempotency-Key": nil})
+	if err == nil || !strings.Contains(err.Error(), "refresh state") || calls.Load() != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls.Load())
 	}
 }
