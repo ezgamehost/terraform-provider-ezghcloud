@@ -26,14 +26,14 @@ A managed Valkey or Memcached cache in a subnet of your VPC, reached at one endp
 
 ### Optional
 
-- `allowed_source_cidrs` (List of String) 1 to 20 IPv4 CIDRs allowed to connect. Left out, the VPC's ranges.
+- `allowed_source_cidrs` (List of String) 1 to 20 IPv4 CIDRs allowed to connect. Left out at create, the VPC's ranges; removing it later keeps the current list.
 - `deletion_protection` (Boolean) While true, the cache can't be destroyed.
 - `description` (String) Optional description; null clears it.
 - `maintenance_window_utc` (String) Weekly maintenance window, ddd:HH:MM-ddd:HH:MM UTC, at least 30 minutes.
 - `mode` (String) memory or persistent (Valkey only, with storage_size_gib). Changing it replaces the cache.
 - `operation_timeout` (String) Maximum wait for each asynchronous operation, for example 60m.
 - `parameters` (Map of String) Engine parameters, such as maxmemory-policy. Only configured keys are sent and read back; removing a key leaves its value as it is.
-- `plaintext_port` (Boolean) Memcached only: also serve port 11212 without TLS, with a username and password (true unless set). Null on Valkey, which is TLS only. Changes in place.
+- `plaintext_port` (Boolean) Memcached only: also serve port 11212 without TLS, with a username and password (true when left out at create; removing it later keeps the current value). Null on Valkey, which is TLS only. Changes in place.
 - `standby` (Boolean) A standby that takes over if the cache fails: on Valkey with a live copy of the data, on Memcached empty. Changes in place.
 - `storage_iops` (Number) A persistent cache's provisioned storage IOPS. Changes in place.
 - `storage_size_gib` (Number) A persistent cache's storage in GiB, required for one and refused otherwise. Grows in place; shrinking is refused.

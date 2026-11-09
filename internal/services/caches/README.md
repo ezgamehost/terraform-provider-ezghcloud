@@ -10,7 +10,7 @@ Terraform, as for databases.
 | --- | --- |
 | Cache `project_id`, `engine`, `mode`, `subnet_id` | Replace the cache (a cache is replaceable; databases aren't). A change of mode in place goes through a blue/green deployment outside Terraform |
 | Cache `engine_version` | Upgrades in place with its own `PATCH`, after any other change in the same apply (the API takes `engineVersion` alone). An older version is refused at plan: upgrades are one-way |
-| Cache `mode`, `storage_size_gib` | Persistent needs storage, memory only refuses it, Memcached is memory only: checked at plan. Storage grows in place; shrinking is refused at plan |
+| Cache `mode`, `storage_size_gib`, `storage_iops`, `storage_throughput_mbps` | Persistent needs storage, memory only refuses any storage setting, Memcached is memory only: checked at plan. A replacement skips the version and storage checks. Storage grows in place; shrinking is refused at plan |
 | Cache `plaintext_port` | Memcached only (the API defaults it to true); configuring it on Valkey is refused at plan |
 | Cache `parameters` | Only configured keys are sent and read back. The API changes only the keys a `PATCH` names, so removing a key from config leaves its value as it is |
 | Cache `name`, `description`, `tags`, `deletion_protection` | Row changes, sent on every update |
@@ -18,4 +18,6 @@ Terraform, as for databases.
 | User `project_id`, `cache_id`, `name` | Replace the user (a new password in a new Secret) |
 | User `preset` | Valkey only; one `PATCH` in place, so the user and its password stay. Null on Memcached |
 | User `secret_id` | The Secret holding `username`, `password`, `host`, `port`, `engine` and, on Valkey, `uri`. No attribute holds the password, and none is sensitive |
-| User `default` | Comes with the cache and can't be destroyed (`409 default_user`); import it to manage its preset |
+| User `default` | Comes with the cache; import it to manage its preset. Destroying it only removes it from state (the API answers `409 default_user`) |
+| Cache `engine_version` on Memcached | Applied in the maintenance window, so the apply doesn't wait: it warns, and state keeps the new version while the cache reads `upgrading` |
+| Any update | Sends only what changed: during a blue/green deployment caches-api refuses a body that names a setting it can't change then |

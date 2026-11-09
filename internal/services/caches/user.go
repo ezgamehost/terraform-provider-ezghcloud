@@ -2,6 +2,7 @@ package caches
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -52,7 +53,7 @@ func (*userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *r
 		"project_id":      schema.StringAttribute{Required: true, Description: "Project of the cache. Changing it replaces the user.", PlanModifiers: replace},
 		"cache_id":        schema.StringAttribute{Required: true, Description: "Cache (cch_) it belongs to. Changing it replaces the user.", PlanModifiers: replace},
 		"name":            schema.StringAttribute{Required: true, Description: "Username: a lowercase letter, then up to 31 lowercase letters, digits, _ and -. ezgh_ names are reserved. Changing it replaces the user.", PlanModifiers: replace},
-		"preset":          schema.StringAttribute{Optional: true, Computed: true, Description: "Valkey only: readWrite (the default) or readOnly. Changes in place. Null on Memcached, whose users have full access.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+		"preset":          schema.StringAttribute{Optional: true, Computed: true, Description: "Valkey only: readWrite or readOnly (readWrite when left out at create; removing it later keeps the current preset). Changes in place. Null on Memcached, whose users have full access.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		"secret_id":       schema.StringAttribute{Computed: true, Description: "The Secret (sec_) holding the user's username, password, host, port, engine and, on Valkey, a rediss:// uri.", PlanModifiers: keepString},
 		"status":          schema.StringAttribute{Computed: true, Description: "What the user is doing: creating, available, modifying, rotating, deleting or failed."},
 		"failure_code":    schema.StringAttribute{Computed: true, Description: "Why the user's last operation failed, as a code; null when it didn't."},
@@ -163,6 +164,11 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 	if err := send(ctx, r.client, "DELETE", m.path(r.client), nil, nil); err != nil {
+		var e *client.Error
+		if errors.As(err, &e) && e.Code == "default_user" {
+			resp.Diagnostics.AddWarning("The default user stays", "The user default goes with its cache, so destroying it only removes it from Terraform's state.")
+			return
+		}
 		if missing, e := confirmedMissing(ctx, r.client, m.ProjectID.ValueString(), err); !missing {
 			apiError(&resp.Diagnostics, e)
 		}

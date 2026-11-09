@@ -112,8 +112,8 @@ func (*cacheResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 		"storage_throughput_mbps": optionalInt("A persistent cache's provisioned storage throughput in MB/s. Changes in place."),
 		"vpc_id":                  computed("VPC of the subnet."),
 		"subnet_id":               schema.StringAttribute{Required: true, Description: "Subnet (sbn_) the cache is in: it needs 2 free addresses, 3 with a standby. Changing it replaces the cache.", PlanModifiers: replace},
-		"allowed_source_cidrs":    schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "1 to 20 IPv4 CIDRs allowed to connect. Left out, the VPC's ranges.", PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}},
-		"plaintext_port":          schema.BoolAttribute{Optional: true, Computed: true, Description: "Memcached only: also serve port 11212 without TLS, with a username and password (true unless set). Null on Valkey, which is TLS only. Changes in place.", PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}},
+		"allowed_source_cidrs":    schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "1 to 20 IPv4 CIDRs allowed to connect. Left out at create, the VPC's ranges; removing it later keeps the current list.", PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}},
+		"plaintext_port":          schema.BoolAttribute{Optional: true, Computed: true, Description: "Memcached only: also serve port 11212 without TLS, with a username and password (true when left out at create; removing it later keeps the current value). Null on Valkey, which is TLS only. Changes in place.", PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}},
 		"endpoint_hostname":       computed("The endpoint's DNS name; null until it resolves. It stays the same through failovers and upgrades."),
 		"endpoint_port":           schema.Int64Attribute{Computed: true, Description: "The endpoint's TLS port: 6379 on Valkey, 11211 on Memcached.", PlanModifiers: keepInt},
 		"endpoint_plaintext_port": schema.Int64Attribute{Computed: true, Description: "Memcached's port without TLS, 11212, while plaintext_port is true; null otherwise."},
@@ -167,6 +167,15 @@ func (r *cacheResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 			resp.Diagnostics.AddAttributeError(path.Root("storage_size_gib"), "Storage is for persistent caches", "A memory-only cache keeps nothing on disk: leave storage_size_gib out.")
 		}
 	}
+	if known(plan.Mode) && plan.Mode.ValueString() != "persistent" && !req.Config.Raw.IsNull() {
+		for _, name := range []string{"storage_iops", "storage_throughput_mbps"} {
+			var configured types.Int64
+			resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(name), &configured)...)
+			if !configured.IsNull() {
+				resp.Diagnostics.AddAttributeError(path.Root(name), "Storage is for persistent caches", "A memory-only cache keeps nothing on disk: leave "+name+" out.")
+			}
+		}
+	}
 	if known(plan.Engine) && plan.Engine.ValueString() == "valkey" && known(plan.PlaintextPort) && !req.Config.Raw.IsNull() {
 		var configured types.Bool
 		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("plaintext_port"), &configured)...)
@@ -174,7 +183,8 @@ func (r *cacheResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 			resp.Diagnostics.AddAttributeError(path.Root("plaintext_port"), "plaintext_port is Memcached's", "Valkey is reached over TLS only: leave plaintext_port out.")
 		}
 	}
-	if req.State.Raw.IsNull() {
+	// A replacement makes a new cache: an older version or less storage is fine then.
+	if req.State.Raw.IsNull() || len(resp.RequiresReplace) > 0 {
 		return
 	}
 	var state cacheModel
@@ -269,14 +279,26 @@ func createBody(ctx context.Context, m cacheModel) (map[string]any, diag.Diagnos
 	return body, d
 }
 
-// updateBody is the PATCH for everything but an upgrade: name, description, tags and protection
-// always (row changes), the rest only when it changed. Parameters sends only changed keys: the API
-// changes only those it names.
+// updateBody is the PATCH for everything but an upgrade: only what changed, since caches-api refuses
+// a body naming a setting it can't change during a blue/green deployment. Parameters sends only
+// changed keys: the API changes only those it names.
 func updateBody(ctx context.Context, m, old cacheModel) (map[string]any, diag.Diagnostics) {
 	var d diag.Diagnostics
 	tags, td := stringMap(ctx, m.Tags)
 	d.Append(td...)
-	body := map[string]any{"name": m.Name.ValueString(), "description": m.Description.ValueStringPointer(), "tags": tags, "deletionProtection": m.DeletionProtection.ValueBool()}
+	body := map[string]any{}
+	if !m.Name.Equal(old.Name) {
+		body["name"] = m.Name.ValueString()
+	}
+	if !m.Description.Equal(old.Description) {
+		body["description"] = m.Description.ValueStringPointer()
+	}
+	if !m.Tags.Equal(old.Tags) {
+		body["tags"] = tags
+	}
+	if !m.DeletionProtection.Equal(old.DeletionProtection) {
+		body["deletionProtection"] = m.DeletionProtection.ValueBool()
+	}
 	if !m.InstanceType.Equal(old.InstanceType) {
 		body["instanceType"] = m.InstanceType.ValueString()
 	}
@@ -344,7 +366,11 @@ func (r *cacheResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		apiError(&resp.Diagnostics, e)
 		return
 	}
+	pending := m.EngineVersion
 	m.fromAPI(ctx, v, r.client.OrganizationID)
+	if v.Status == "upgrading" && v.Engine == "memcached" && known(pending) {
+		m.EngineVersion = pending // an upgrade waiting for the maintenance window
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	if v.Status != "creating" {
 		return
@@ -379,9 +405,8 @@ func (r *cacheResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 	p := client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "caches", m.ID.ValueString())
-	rowOnly := len(body) == 4 && m.Name.Equal(old.Name) && m.Description.Equal(old.Description) && m.Tags.Equal(old.Tags) && m.DeletionProtection.Equal(old.DeletionProtection)
 	m.OperationID, m.Status = old.OperationID, old.Status
-	send := func(b map[string]any) bool {
+	send := func(b map[string]any, wait bool) bool {
 		out, err := r.client.Do(ctx, service, "PATCH", p, b)
 		if err != nil {
 			apiError(&resp.Diagnostics, err)
@@ -389,17 +414,31 @@ func (r *cacheResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		}
 		m.OperationID = operationID(out)
 		resp.Diagnostics.Append(setKnown(ctx, &resp.State, &m)...)
+		if !wait {
+			return true
+		}
 		if err = waitResponse(ctx, r.client, out); err != nil {
 			apiError(&resp.Diagnostics, fmt.Errorf("cache %s, operation %s: %w", m.ID.ValueString(), m.OperationID.ValueString(), err))
 			return false
 		}
 		return true
 	}
-	if !rowOnly && !send(body) {
+	if len(body) > 0 && !send(body, true) {
 		return
 	}
-	if !m.EngineVersion.Equal(old.EngineVersion) && !send(map[string]any{"engineVersion": m.EngineVersion.ValueString()}) {
-		return
+	if !m.EngineVersion.Equal(old.EngineVersion) {
+		// Memcached's upgrade waits for the maintenance window: it's accepted, not waited for, and
+		// state keeps the new version while the cache is upgrading.
+		memcached := m.Engine.ValueString() == "memcached"
+		if !send(map[string]any{"engineVersion": m.EngineVersion.ValueString()}, !memcached) {
+			return
+		}
+		if memcached {
+			resp.Diagnostics.AddWarning("Upgrade applied in the maintenance window", fmt.Sprintf("Cache %s moves to Memcached %s in its maintenance window (%s), and starts empty then. Its operation is %s.", m.ID.ValueString(), m.EngineVersion.ValueString(), m.MaintenanceWindowUTC.ValueString(), m.OperationID.ValueString()))
+			m.Status = types.StringValue("upgrading")
+			resp.Diagnostics.Append(setKnown(ctx, &resp.State, &m)...)
+			return
+		}
 	}
 	r.refresh(ctx, &m, &resp.State, &resp.Diagnostics)
 }

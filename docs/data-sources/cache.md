@@ -22,7 +22,7 @@ Read an existing EZGH Cloud cache by its ID.
 
 ### Read-Only
 
-- `allowed_source_cidrs` (List of String) 1 to 20 IPv4 CIDRs allowed to connect. Left out, the VPC's ranges.
+- `allowed_source_cidrs` (List of String) 1 to 20 IPv4 CIDRs allowed to connect. Left out at create, the VPC's ranges; removing it later keeps the current list.
 - `deletion_protection` (Boolean) While true, the cache can't be destroyed.
 - `description` (String) Optional description; null clears it.
 - `endpoint_hostname` (String) The endpoint's DNS name; null until it resolves. It stays the same through failovers and upgrades.
@@ -36,7 +36,7 @@ Read an existing EZGH Cloud cache by its ID.
 - `name` (String) Cache name. Changes in place.
 - `organization_id` (String) Organization managed by the configured provider.
 - `parameters` (Map of String) Engine parameters, such as maxmemory-policy. Only configured keys are sent and read back; removing a key leaves its value as it is.
-- `plaintext_port` (Boolean) Memcached only: also serve port 11212 without TLS, with a username and password (true unless set). Null on Valkey, which is TLS only. Changes in place.
+- `plaintext_port` (Boolean) Memcached only: also serve port 11212 without TLS, with a username and password (true when left out at create; removing it later keeps the current value). Null on Valkey, which is TLS only. Changes in place.
 - `resource_name` (String) IAM resource name.
 - `standby` (Boolean) A standby that takes over if the cache fails: on Valkey with a live copy of the data, on Memcached empty. Changes in place.
 - `status` (String) What the cache is doing.

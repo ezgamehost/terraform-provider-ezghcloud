@@ -23,7 +23,7 @@ A user of a cache. Its password is generated and kept in a Secret in the cache's
 
 ### Optional
 
-- `preset` (String) Valkey only: readWrite (the default) or readOnly. Changes in place. Null on Memcached, whose users have full access.
+- `preset` (String) Valkey only: readWrite or readOnly (readWrite when left out at create; removing it later keeps the current preset). Changes in place. Null on Memcached, whose users have full access.
 
 ### Read-Only
 

@@ -137,6 +137,16 @@ func TestCachePlanRefusesADowngradeAndShrinking(t *testing.T) {
 	if resp := modifyPlan(t, &old, small); !resp.Diagnostics.HasError() {
 		t.Error("shrinking storage wasn't refused")
 	}
+	// A replacement (Valkey 9.1 to Memcached 1.6) makes a new cache: no upgrade checks.
+	r := &cacheResource{}
+	swap := old
+	swap.Engine, swap.EngineVersion, swap.Mode, swap.StorageSizeGiB, swap.StorageIOPS, swap.StorageThroughputMBps = types.StringValue("memcached"), types.StringValue("1.6"), types.StringValue("memory"), types.Int64Null(), types.Int64Null(), types.Int64Null()
+	st, pl := asState(t, r, &old), asState(t, r, &swap)
+	resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: pl.Schema, Raw: pl.Raw}, RequiresReplace: path.Paths{path.Root("engine")}}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{State: st, Plan: tfsdk.Plan{Schema: pl.Schema, Raw: pl.Raw}, Config: tfsdk.Config{Schema: pl.Schema, Raw: pl.Raw}}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("replacement: %v", resp.Diagnostics)
+	}
 }
 
 func TestCachePlanChecksModeAndStorage(t *testing.T) {
@@ -179,7 +189,7 @@ func TestCacheBodies(t *testing.T) {
 	next.Standby, next.StorageSizeGiB = types.BoolValue(true), types.Int64Value(40)
 	next.Parameters = types.MapValueMust(types.StringType, map[string]attr.Value{"maxmemory-policy": types.StringValue("volatile-lru")})
 	body, _ = updateBody(ctx, next, old)
-	if body["standby"] != true || !reflect.DeepEqual(body["storage"], map[string]any{"sizeGiB": int64(40)}) || !reflect.DeepEqual(body["parameters"], map[string]string{"maxmemory-policy": "volatile-lru"}) || body["engineVersion"] != nil {
+	if body["name"] != nil || body["deletionProtection"] != nil || body["tags"] != nil || body["standby"] != true || !reflect.DeepEqual(body["storage"], map[string]any{"sizeGiB": int64(40)}) || !reflect.DeepEqual(body["parameters"], map[string]string{"maxmemory-policy": "volatile-lru"}) || body["engineVersion"] != nil {
 		t.Errorf("update %v", body)
 	}
 }
@@ -218,7 +228,7 @@ func TestCacheUpdateUpgradesOnItsOwn(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatal(resp.Diagnostics)
 	}
-	if len(patches) != 2 || patches[0]["standby"] != true || patches[0]["engineVersion"] != nil || !reflect.DeepEqual(patches[1], map[string]any{"engineVersion": "9.1"}) {
+	if len(patches) != 2 || !reflect.DeepEqual(patches[0], map[string]any{"standby": true}) || !reflect.DeepEqual(patches[1], map[string]any{"engineVersion": "9.1"}) {
 		t.Errorf("%v", patches)
 	}
 	var version types.String
