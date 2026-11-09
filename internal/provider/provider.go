@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/caches"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/certificates"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/compute"
-	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/caches"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/databases"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/dns"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/files"
