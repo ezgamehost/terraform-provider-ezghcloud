@@ -26,7 +26,7 @@ resource "ezghcloud_cache" "wp" {
   name           = "wp-cache"
   engine         = "valkey"
   engine_version = "9.1"
-  instance_type  = "gp-1.small"
+  instance_type  = "gp-1.large"
   standby        = true
   subnet_id      = var.subnet_id
 
@@ -40,7 +40,7 @@ resource "ezghcloud_cache" "sessions" {
   engine           = "valkey"
   engine_version   = "9.1"
   mode             = "persistent"
-  instance_type    = "gp-1.medium"
+  instance_type    = "gp-1.xlarge"
   storage_size_gib = 20
   subnet_id        = var.subnet_id
 }
@@ -51,7 +51,7 @@ resource "ezghcloud_cache" "wp_memcached" {
   name           = "wp-memcached"
   engine         = "memcached"
   engine_version = "1.6"
-  instance_type  = "gs-1.small"
+  instance_type  = "gs-1.large"
   subnet_id      = var.subnet_id
   plaintext_port = true
 }
