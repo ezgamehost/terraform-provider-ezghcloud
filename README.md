@@ -6,7 +6,7 @@ This provider is under development. Build it locally using the instructions belo
 there is no published Terraform Registry release yet.
 
 The provider covers projects, VPCs, subnets, firewalls, SSH keys,
-instances, volumes, databases with their backups, and file systems with their mount targets
+instances, volumes, databases with their backups, caches with their users, and file systems with their mount targets
 and access points, DNS zones and record sets, Web Certificates domain authorizations
 and certificates, Kubernetes clusters with their node groups, add-ons, access entries and pod
 identity associations, WAFs and their load balancer attachments, plus IAM bots, groups, policies, memberships, policy

@@ -25,7 +25,7 @@ var DefaultEndpoints = map[string]string{
 	"databases": "https://databases-api.ezghcloud.com", "files": "https://files-api.ezghcloud.com",
 	"dns": "https://dns-api.ezghcloud.com", "certificates": "https://certificates.ezghcloud.com",
 	"kubernetes": "https://kubernetes-api.ezghcloud.com", "lb": "https://lb-api.ezghcloud.com",
-	"waf": "https://waf-api.ezghcloud.com",
+	"waf": "https://waf-api.ezghcloud.com", "caches": "https://caches-api.ezghcloud.com",
 }
 
 type Config struct {
