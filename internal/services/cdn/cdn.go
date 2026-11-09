@@ -26,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 )
 
 const service = "cdn"
@@ -33,7 +34,10 @@ const service = "cdn"
 // MaxDomains is cdn.domainsPerDistribution.
 const MaxDomains = 10
 
-var prefixedID = regexp.MustCompile(`^cdn_[a-z0-9]{12}$`)
+var (
+	prefixedID    = regexp.MustCompile(`^cdn_[a-z0-9]{12}$`)
+	certificateID = regexp.MustCompile(`^crt_[a-z0-9]{12}$`)
+)
 
 // etagKey is where a distribution's ETag is kept in private state: its document carries no
 // version, and an update is conditional on the one last read.
@@ -160,17 +164,36 @@ func (r *distributionResource) Configure(_ context.Context, req resource.Configu
 }
 
 // ValidateConfig refuses at plan what cdn-api would refuse at apply and can be known from config.
+// The origin object or the domain list as a whole may be unknown (built from other resources):
+// what's unknown waits for apply.
 func (*distributionResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var m distributionModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &m)...)
+	var o types.Object
+	var domains types.List
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("name"), &m.Name)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("origin"), &o)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("domain"), &domains)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(validate(m)...)
+	if known(o) {
+		m.Origin = &origin{}
+		resp.Diagnostics.Append(o.As(ctx, m.Origin, basetypes.ObjectAsOptions{UnhandledUnknownAsEmpty: true})...)
+	}
+	if known(domains) {
+		resp.Diagnostics.Append(domains.ElementsAs(ctx, &m.Domains, false)...)
+	}
+	if !resp.Diagnostics.HasError() {
+		resp.Diagnostics.Append(validate(m)...)
+	}
 }
 
 func validate(m distributionModel) diag.Diagnostics {
 	var d diag.Diagnostics
+	// cdn-api trims a name, which would read back different from config.
+	if known(m.Name) && (strings.TrimSpace(m.Name.ValueString()) != m.Name.ValueString() || m.Name.ValueString() == "") {
+		d.AddAttributeError(path.Root("name"), "Invalid name", "Give 1 to 100 characters, without spaces at either end.")
+	}
 	one := func(v types.String, p path.Path, allowed ...string) {
 		if known(v) && !slices.Contains(allowed, v.ValueString()) {
 			d.AddAttributeError(p, "Invalid value", fmt.Sprintf("Must be %s.", strings.Join(allowed, " or ")))
@@ -199,7 +222,7 @@ func validate(m distributionModel) diag.Diagnostics {
 			}
 			seen[h] = true
 		}
-		if known(x.CertificateID) && !regexp.MustCompile(`^crt_[a-z0-9]{12}$`).MatchString(x.CertificateID.ValueString()) {
+		if known(x.CertificateID) && !certificateID.MatchString(x.CertificateID.ValueString()) {
 			d.AddAttributeError(p.AtName("certificate_id"), "Invalid certificate", "Must be a crt_ ID.")
 		}
 	}

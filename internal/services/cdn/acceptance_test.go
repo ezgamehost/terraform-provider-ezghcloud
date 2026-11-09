@@ -211,3 +211,27 @@ func TestCDNHiddenWithoutPreview(t *testing.T) {
 		}
 	}
 }
+
+// An origin or domain list built from other resources is unknown at plan: validation waits for it.
+func TestAccCDNDistributionUnknownAtPlan(t *testing.T) {
+	t.Setenv("EZGHCLOUD_PREVIEW_CDN", "1")
+	f := newFixture(t)
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
+		{Config: f.provider() + `
+resource "terraform_data" "host" { input = "origin.example.com" }
+resource "terraform_data" "domains" { input = ["www.example.com"] }
+resource "ezghcloud_cdn_distribution" "web" {
+ project_id = "prj"
+ name = "web"
+ origin = { host = terraform_data.host.output }
+ dynamic "domain" {
+  for_each = terraform_data.domains.output
+  content {
+   hostname = domain.value
+   certificate_id = "crt_2m9x0a7qpe4k"
+  }
+ }
+}
+`, Check: resource.TestCheckResourceAttr("ezghcloud_cdn_distribution.web", "domain.0.hostname", "www.example.com")},
+	}})
+}

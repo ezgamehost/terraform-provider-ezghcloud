@@ -46,6 +46,7 @@ func TestValidateAtPlan(t *testing.T) {
 			d := domain{Hostname: types.StringValue("www.example.com"), CertificateID: types.StringValue("crt_2m9x0a7qpe4k")}
 			m.Domains = []domain{d, d}
 		},
+		"name with spaces": func(m *distributionModel) { m.Name = types.StringValue("web ") },
 		"certificate": func(m *distributionModel) {
 			m.Domains = []domain{{Hostname: types.StringValue("www.example.com"), CertificateID: types.StringValue("lbr_2m9x0a7qpe4k")}}
 		},
