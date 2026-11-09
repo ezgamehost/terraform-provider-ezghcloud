@@ -1,7 +1,6 @@
 package cdn_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,13 +11,8 @@ import (
 	"testing"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/provider"
-	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	framework "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
-	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
@@ -139,7 +133,6 @@ data "ezghcloud_cdn_distribution" "web" {
 }
 
 func TestAccCDNDistributionLifecycle(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_CDN", "1")
 	f := newFixture(t)
 	domain := `domain {
  hostname = "www.example.com"
@@ -174,47 +167,8 @@ func TestAccCDNDistributionLifecycle(t *testing.T) {
 		}})
 }
 
-// Without EZGHCLOUD_PREVIEW_CDN=1 the provider serves no CDN resource or data source, its endpoints
-// description doesn't name cdn, and an endpoints.cdn override is refused.
-func TestCDNHiddenWithoutPreview(t *testing.T) {
-	ctx := context.Background()
-	for _, preview := range []string{"", "1"} {
-		t.Setenv("EZGHCLOUD_PREVIEW_CDN", preview)
-		p := provider.New("test")()
-		var names []string
-		for _, r := range p.Resources(ctx) {
-			var resp fwresource.MetadataResponse
-			r().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
-		}
-		for _, d := range p.DataSources(ctx) {
-			var resp datasource.MetadataResponse
-			d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			names = append(names, resp.TypeName)
-		}
-		var sr framework.SchemaResponse
-		p.Schema(ctx, framework.SchemaRequest{}, &sr)
-		described := strings.Contains(sr.Schema.Attributes["endpoints"].GetDescription(), "cdn")
-		served := strings.Contains(strings.Join(names, " "), "cdn")
-		if served != (preview == "1") || described != (preview == "1") {
-			t.Fatalf("preview %q: served %v, described %v", preview, served, described)
-		}
-		raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"api_token":       tftypes.NewValue(tftypes.String, "token"),
-			"organization_id": tftypes.NewValue(tftypes.String, "org_test"),
-			"endpoints":       tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, map[string]tftypes.Value{"cdn": tftypes.NewValue(tftypes.String, "https://cdn.test")}),
-		})
-		var resp framework.ConfigureResponse
-		p.Configure(ctx, framework.ConfigureRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
-		if resp.Diagnostics.HasError() != (preview == "") {
-			t.Fatalf("preview %q, endpoints.cdn: %v", preview, resp.Diagnostics)
-		}
-	}
-}
-
 // An origin or domain list built from other resources is unknown at plan: validation waits for it.
 func TestAccCDNDistributionUnknownAtPlan(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_CDN", "1")
 	f := newFixture(t)
 	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
 		{Config: f.provider() + `

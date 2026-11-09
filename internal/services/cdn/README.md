@@ -1,8 +1,7 @@
 # CDN lifecycle
 
 The schema was checked against cdn-api's OpenAPI document (cdn-stack `5d55d45`, built from its
-manifest and overlay) on 2026-11-09. Terraform IDs are the slug (`cdn_`). Served only with
-`EZGHCLOUD_PREVIEW_CDN=1` until launch (Gate 3): then drop `cdnPreview` and run `make docs`.
+manifest and overlay) on 2026-11-09. Terraform IDs are the slug (`cdn_`).
 
 | Resource / field | Behavior |
 | --- | --- |

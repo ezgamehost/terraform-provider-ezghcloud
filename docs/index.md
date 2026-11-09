@@ -30,5 +30,5 @@ provider "ezghcloud" {}
 ### Optional
 
 - `api_token` (String, Sensitive) Customer bearer credential. Defaults to EZGHCLOUD_API_TOKEN. The credential is never stored as a resource attribute.
-- `endpoints` (Map of String) Optional API base URL overrides by service: orgs, compute, network, firewall, blockstore, images, databases, caches, files, dns, certificates, kubernetes, lb, waf. Credentials are sent to these URLs; use trusted endpoints only. Defaults to public HTTPS APIs.
+- `endpoints` (Map of String) Optional API base URL overrides by service: orgs, compute, network, firewall, blockstore, images, databases, caches, files, dns, certificates, kubernetes, lb, waf, cdn. Credentials are sent to these URLs; use trusted endpoints only. Defaults to public HTTPS APIs.
 - `organization_id` (String) Organization identifier. Defaults to EZGHCLOUD_ORGANIZATION_ID. Use provider aliases for multiple organizations.
