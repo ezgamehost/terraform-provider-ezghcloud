@@ -21,7 +21,11 @@ import (
 )
 
 func Resources() []func() resource.Resource {
-	return []func() resource.Resource{func() resource.Resource { return &vpcResource{} }, func() resource.Resource { return &subnetResource{} }, func() resource.Resource { return &firewallResource{} }}
+	out := []func() resource.Resource{func() resource.Resource { return &vpcResource{} }, func() resource.Resource { return &subnetResource{} }, func() resource.Resource { return &firewallResource{} }}
+	if natPreview() {
+		out = append(out, func() resource.Resource { return &natGatewayResource{} })
+	}
+	return out
 }
 func DataSources() []func() datasource.DataSource {
 	return []func() datasource.DataSource{func() datasource.DataSource { return &lookup{kind: "vpc"} }, func() datasource.DataSource { return &lookup{kind: "subnet"} }, func() datasource.DataSource { return &lookup{kind: "firewall"} }}

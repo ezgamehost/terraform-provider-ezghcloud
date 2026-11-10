@@ -1,6 +1,7 @@
 package network_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,16 +12,22 @@ import (
 
 	cloudprovider "github.com/ezgamehost/terraform-provider-ezghcloud/internal/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccNetworkLifecycle(t *testing.T) {
+	// NAT Gateways aren't launched: the resource is served only with the preview variable.
+	t.Setenv("EZGHCLOUD_PREVIEW_NAT_GATEWAY", "1")
+	// natReads counts the reads of the NAT gateway's operation: the first of each operation
+	// answers it running, the next succeeded, and only then is the gateway active or gone.
+	natReads, natDeleting := 0, false
 	var mu sync.Mutex
 	objects := map[string]map[string]any{}
 	versions := map[string]int{}
-	ids := map[string]string{"vpcs": "vpc_aaaaaaaaaaaa", "subnets": "sbn_aaaaaaaaaaaa", "firewalls": "fwl_aaaaaaaaaaaa"}
+	ids := map[string]string{"vpcs": "vpc_aaaaaaaaaaaa", "subnets": "sbn_aaaaaaaaaaaa", "firewalls": "fwl_aaaaaaaaaaaa", "nat-gateways": "nat_aaaaaaaaaaaa"}
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -35,7 +42,49 @@ func TestAccNetworkLifecycle(t *testing.T) {
 			return
 		}
 		kind := parts[5]
+		const natOperation = "/v1/organizations/org_test/projects/prj_test/nat-gateway-operations/op_1"
+		if kind == "nat-gateway-operations" {
+			natReads++
+			status := "running"
+			if natReads > 1 {
+				status = "succeeded"
+				if natDeleting {
+					delete(objects, "nat-gateways")
+				} else {
+					objects["nat-gateways"]["status"] = "active"
+				}
+			}
+			w.Header().Set("Retry-After", "0")
+			json.NewEncoder(w).Encode(map[string]any{"id": "op_1", "status": status})
+			return
+		}
 		current := objects[kind]
+		if kind == "nat-gateways" && (r.Method == "POST" || r.Method == "DELETE") {
+			natReads, natDeleting = 0, r.Method == "DELETE"
+			if r.Method == "POST" {
+				var body map[string]any
+				json.NewDecoder(r.Body).Decode(&body)
+				if r.Header.Get("Idempotency-Key") == "" || len(body) != 3 {
+					w.WriteHeader(400)
+					w.Write([]byte(`{"error":{"code":"invalid_request"}}`))
+					return
+				}
+				current = map[string]any{"id": "resource-uuid", "slug": ids[kind], "name": body["name"], "vpc": body["vpc"], "subnet": body["subnet"],
+					"publicIpv4Addresses": []map[string]any{{"id": "pip_aaaaaaaaaaaa", "address": "203.0.113.7"}}, "createdAt": "2026-11-10T00:00:00.000Z", "updatedAt": "2026-11-10T00:00:00.000Z"}
+				objects[kind] = current
+			}
+			if current == nil {
+				w.WriteHeader(404)
+				w.Write([]byte(`{"error":{"code":"not_found"}}`))
+				return
+			}
+			current["status"] = map[string]string{"POST": "provisioning", "DELETE": "deleting"}[r.Method]
+			w.Header().Set("Location", natOperation)
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(202)
+			json.NewEncoder(w).Encode(current)
+			return
+		}
 		if r.Method == "GET" && current == nil {
 			w.WriteHeader(404)
 			w.Write([]byte(`{"error":{"code":"not_found"}}`))
@@ -126,6 +175,12 @@ resource "ezghcloud_firewall" "test" {
  name = %[2]q
  rules = [{direction="inbound",protocol="tcp",peer_cidr="10.40.0.0/16",ports_from=%[4]d,ports_to=%[4]d}]
 }
+resource "ezghcloud_nat_gateway" "test" {
+ project_id = "prj_test"
+ name = %[2]q
+ vpc_id = ezghcloud_vpc.test.id
+ subnet_id = ezghcloud_subnet.test.id
+}
 data "ezghcloud_vpc" "test" {
  project_id = "prj_test"
  id = ezghcloud_vpc.test.id
@@ -143,11 +198,15 @@ data "ezghcloud_firewall" "test" {
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(cloudprovider.New("test")())},
 		Steps: []resource.TestStep{
-			{Config: config("first", true, 22), Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("ezghcloud_vpc.test", "id", ids["vpcs"]), resource.TestCheckResourceAttr("data.ezghcloud_subnet.test", "vpc_id", ids["vpcs"]), resource.TestCheckResourceAttr("data.ezghcloud_firewall.test", "rules.#", "1"))},
+			{Config: config("first", true, 22), Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("ezghcloud_vpc.test", "id", ids["vpcs"]), resource.TestCheckResourceAttr("data.ezghcloud_subnet.test", "vpc_id", ids["vpcs"]), resource.TestCheckResourceAttr("data.ezghcloud_firewall.test", "rules.#", "1"),
+				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "id", ids["nat-gateways"]), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "status", "active"),
+				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "subnet_id", ids["subnets"]), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.#", "1"),
+				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.0.id", "pip_aaaaaaaaaaaa"), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.0.address", "203.0.113.7"))},
+			{ResourceName: "ezghcloud_nat_gateway.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["nat-gateways"], ImportStateVerify: true},
 			{ResourceName: "ezghcloud_vpc.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["vpcs"], ImportStateVerify: true},
 			{ResourceName: "ezghcloud_subnet.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["subnets"], ImportStateVerify: true},
 			{ResourceName: "ezghcloud_firewall.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["firewalls"], ImportStateVerify: true},
-			{Config: config("renamed", false, 443), Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("ezghcloud_vpc.test", "name", "renamed"), resource.TestCheckResourceAttr("ezghcloud_subnet.test", "auto_assign_public_ipv4", "false"), resource.TestCheckResourceAttr("ezghcloud_firewall.test", "rules.0.ports_from", "443"))},
+			{Config: config("renamed", false, 443), Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("ezghcloud_vpc.test", "name", "renamed"), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "name", "renamed"), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "id", ids["nat-gateways"]), resource.TestCheckResourceAttr("ezghcloud_subnet.test", "auto_assign_public_ipv4", "false"), resource.TestCheckResourceAttr("ezghcloud_firewall.test", "rules.0.ports_from", "443"))},
 		}, CheckDestroy: func(_ *terraform.State) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -157,4 +216,21 @@ data "ezghcloud_firewall" "test" {
 			return nil
 		},
 	})
+}
+
+// Until NAT Gateways launch the provider serves the resource only with the preview variable, so
+// releases and their generated docs leave it out.
+func TestNATGatewayNeedsPreview(t *testing.T) {
+	for preview, want := range map[string]bool{"": false, "1": true} {
+		t.Setenv("EZGHCLOUD_PREVIEW_NAT_GATEWAY", preview)
+		var resp fwresource.MetadataResponse
+		found := false
+		for _, r := range cloudprovider.New("test")().Resources(context.Background()) {
+			r().Metadata(context.Background(), fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
+			found = found || resp.TypeName == "ezghcloud_nat_gateway"
+		}
+		if found != want {
+			t.Errorf("preview %q: served %t, want %t", preview, found, want)
+		}
+	}
 }

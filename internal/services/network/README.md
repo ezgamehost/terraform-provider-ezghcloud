@@ -15,6 +15,9 @@ on 2026-11-01 and the corresponding target authorization handlers.
 | Subnet: auto_assign_public_ipv4, auto_assign_public_ipv6 | PATCH in place; also set after initial create if enabled |
 | Firewall: rules | Authoritative set replacement with If-Match |
 | Firewall: etag | Computed version for optimistic concurrency |
+| NAT gateway: name | PATCH in place (it has no description or tags) |
+| NAT gateway: vpc_id, subnet_id | Replace |
+| NAT gateway: public_ipv4_addresses | Computed at create; kept across updates |
 
 Firewall rules use semantic fields only, so generated rule IDs and order do not
 cause drift. Omitted rules mean an explicitly empty collection at create. Each
@@ -41,3 +44,10 @@ state on interruption or failure.
 Read-only lookups exist for VPC, subnet and firewall by exact canonical ID. Fields
 outside this table, including explicit subnet route-table association, are not
 managed by this first provider surface.
+
+`ezghcloud_nat_gateway` is served only with `EZGHCLOUD_PREVIEW_NAT_GATEWAY=1` until NAT Gateways
+launch, so releases and their generated docs leave it out. Its wire shape follows the design, not
+a served OpenAPI document: check it against the service's document before launch. Create and
+delete are asynchronous: the provider records the gateway from the accepted answer, then waits
+for the operation at its `Location`; a failed or interrupted create leaves the gateway in state.
+Routes to a gateway aren't managed: the provider has no route-table resource.
