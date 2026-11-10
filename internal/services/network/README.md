@@ -17,7 +17,8 @@ on 2026-11-01 and the corresponding target authorization handlers.
 | Firewall: etag | Computed version for optimistic concurrency |
 | NAT gateway: name | PATCH in place (it has no description or tags) |
 | NAT gateway: vpc_id, subnet_id | Replace |
-| NAT gateway: public_ipv4_addresses | Computed at create; kept across updates |
+| NAT gateway: public_ipv4_addresses | Computed at create; kept across updates; new on replacement |
+| NAT gateway: timeouts | create and delete waits, 20m each by default; changed in place |
 
 Firewall rules use semantic fields only, so generated rule IDs and order do not
 cause drift. Omitted rules mean an explicitly empty collection at create. Each
@@ -50,5 +51,9 @@ launch, so releases and their generated docs leave it out. Its wire shape was ch
 OpenAPI document at c397dce8. Create and
 delete are asynchronous and the gateway is its own operation: the provider records it from the
 accepted answer, then reads it until it is `active` (create) or until reading it answers 404
-(delete), for up to ten minutes; a failed or interrupted create leaves the gateway in state.
+(delete), for the `timeouts` attribute's `create` and `delete` (20 minutes each by default). A read
+that fails during the wait is tried again, whatever the failure; only the limit, or the gateway
+being gone or deleted under a create, ends a wait in an error. A create that times out leaves the
+gateway in state, tainted: `terraform untaint` keeps it once it is active. A replaced gateway
+(project, VPC or subnet changed, or a tainted one applied) gets a new public IPv4 address.
 Routes to a gateway aren't managed: the provider has no route-table resource.

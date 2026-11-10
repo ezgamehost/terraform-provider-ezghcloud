@@ -46,10 +46,17 @@ func TestAccNetworkLifecycle(t *testing.T) {
 		current := objects[kind]
 		if kind == "nat-gateways" && current != nil && r.Method == "GET" {
 			natReads++
-			if natReads > 1 && current["status"] == "provisioning" {
+			// The first read after a create or delete fails in a way the client doesn't retry:
+			// the wait must outlast it, not fail (and taint) the gateway.
+			if natReads == 1 && (current["status"] == "provisioning" || current["status"] == "deleting") {
+				w.WriteHeader(500)
+				w.Write([]byte(`{"error":{"code":"internal_error","message":"try again"}}`))
+				return
+			}
+			if natReads > 2 && current["status"] == "provisioning" {
 				current["status"] = "active"
 			}
-			if natReads > 1 && current["status"] == "deleting" {
+			if natReads > 2 && current["status"] == "deleting" {
 				delete(objects, kind)
 				current = nil
 			}
@@ -175,6 +182,7 @@ resource "ezghcloud_nat_gateway" "test" {
  name = %[2]q
  vpc_id = ezghcloud_vpc.test.id
  subnet_id = ezghcloud_subnet.test.id
+ timeouts = { create = "5m" }
 }
 data "ezghcloud_vpc" "test" {
  project_id = "prj_test"
@@ -197,7 +205,7 @@ data "ezghcloud_firewall" "test" {
 				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "id", ids["nat-gateways"]), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "status", "active"), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "resource_name", "ezgh:test:"+ids["nat-gateways"]),
 				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "subnet_id", ids["subnets"]), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.#", "1"),
 				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.0.id", "pip_aaaaaaaaaaaa"), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.0.address", "203.0.113.7"))},
-			{ResourceName: "ezghcloud_nat_gateway.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["nat-gateways"], ImportStateVerify: true},
+			{ResourceName: "ezghcloud_nat_gateway.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["nat-gateways"], ImportStateVerify: true, ImportStateVerifyIgnore: []string{"timeouts"}},
 			{ResourceName: "ezghcloud_vpc.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["vpcs"], ImportStateVerify: true},
 			{ResourceName: "ezghcloud_subnet.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["subnets"], ImportStateVerify: true},
 			{ResourceName: "ezghcloud_firewall.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["firewalls"], ImportStateVerify: true},

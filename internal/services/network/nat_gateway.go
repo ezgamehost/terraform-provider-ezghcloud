@@ -33,6 +33,7 @@ type natGatewayModel struct {
 	SubnetID            types.String `tfsdk:"subnet_id"`
 	PublicIPv4Addresses types.List   `tfsdk:"public_ipv4_addresses"`
 	ResourceName        types.String `tfsdk:"resource_name"`
+	Timeouts            types.Object `tfsdk:"timeouts"`
 	Status              types.String `tfsdk:"status"`
 }
 type natAddressWire struct {
@@ -72,7 +73,7 @@ func (r *natGatewayResource) Metadata(_ context.Context, req resource.MetadataRe
 func (r *natGatewayResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	keep, replace := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
-		Description: "Manage an EZGH Cloud NAT gateway: outbound IPv4 internet access for a VPC's private subnets behind one public IPv4 address. Creating a gateway changes no routes; a subnet uses it once its route table has a route to it.",
+		Description: "Manage an EZGH Cloud NAT gateway: outbound IPv4 internet access for a VPC's private subnets behind one public IPv4 address. Creating a gateway changes no routes; a subnet uses it once its route table has a route to it. A gateway that is replaced (a change of project, VPC or subnet, or a tainted resource) gets a new public IPv4 address: update anything that allowlists the old one.",
 		Attributes: map[string]schema.Attribute{
 			"id":              schema.StringAttribute{Computed: true, Description: "Canonical prefixed resource ID (nat_).", PlanModifiers: keep},
 			"organization_id": schema.StringAttribute{Computed: true, Description: "Organization owning this resource.", PlanModifiers: keep},
@@ -88,6 +89,11 @@ func (r *natGatewayResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				}}},
 			"resource_name": schema.StringAttribute{Computed: true, Description: "IAM resource name.", PlanModifiers: keep},
 			"status":        schema.StringAttribute{Computed: true, Description: "Current service status."},
+			"timeouts": schema.SingleNestedAttribute{Optional: true, Description: "How long to wait for the gateway to be active after a create, and gone after a delete. If a create times out the gateway keeps coming up but the resource is tainted: `terraform untaint` keeps it and its address.",
+				Attributes: map[string]schema.Attribute{
+					"create": schema.StringAttribute{Optional: true, Description: "A duration such as 30m. Default 20m."},
+					"delete": schema.StringAttribute{Optional: true, Description: "A duration such as 30m. Default 20m."},
+				}},
 		},
 	}
 }
@@ -127,6 +133,10 @@ func (r *natGatewayResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	limit, diags := m.timeout(ctx, "create")
+	if resp.Diagnostics.Append(diags...); resp.Diagnostics.HasError() {
+		return
+	}
 	m.OrganizationID = types.StringValue(r.client.OrganizationID)
 	body := map[string]any{"name": m.Name.ValueString(), "vpc": m.VPCID.ValueString(), "subnet": m.SubnetID.ValueString()}
 	accepted, err := r.client.Do(ctx, "network", "POST", r.path(m), body)
@@ -144,27 +154,60 @@ func (r *natGatewayResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(r.wait(ctx, &m, false)...)
+	resp.Diagnostics.Append(r.wait(ctx, &m, false, limit)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
 
-// wait follows an accepted create or delete. The gateway is its own operation: it's read until
-// it's active (create), or until reading it answers 404 (delete), for up to ten minutes. A create
-// leaves m as last read.
-func (r *natGatewayResource) wait(ctx context.Context, m *natGatewayModel, deleting bool) diag.Diagnostics {
+// natTimeout is how long a create or delete is waited on unless the timeouts block says otherwise.
+const natTimeout = 20 * time.Minute
+
+var natTimeoutTypes = map[string]attr.Type{"create": types.StringType, "delete": types.StringType}
+
+// timeout is the timeouts block's limit for "create" or "delete", natTimeout without one.
+func (m natGatewayModel) timeout(ctx context.Context, operation string) (time.Duration, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	if m.Timeouts.IsNull() || m.Timeouts.IsUnknown() {
+		return natTimeout, diags
+	}
+	value, _ := m.Timeouts.Attributes()[operation].(types.String)
+	if value.IsNull() || value.IsUnknown() {
+		return natTimeout, diags
+	}
+	d, err := time.ParseDuration(value.ValueString())
+	if err != nil || d <= 0 {
+		diags.AddAttributeError(path.Root("timeouts").AtName(operation), "Invalid timeout", fmt.Sprintf("%q isn't a positive duration such as 20m or 1h.", value.ValueString()))
+	}
+	return d, diags
+}
+
+// wait follows an accepted create or delete. The gateway is its own operation: it's read until
+// it's active (create), or until reading it answers 404 (delete), for up to limit. A read that
+// fails is tried again, whatever the failure: the gateway carries on regardless, and failing a
+// create here would taint a gateway that is coming up (its replacement has another address). Only
+// the limit, or the gateway itself being gone or deleted under a create, ends a wait in an error.
+// A create leaves m as last read.
+func (r *natGatewayResource) wait(ctx context.Context, m *natGatewayModel, deleting bool, limit time.Duration) diag.Diagnostics {
+	var diags diag.Diagnostics
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	id := m.ID.ValueString()
+	var unread error
 	for {
 		timer := time.NewTimer(time.Second)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			diags.AddError("Wait for NAT gateway", fmt.Sprintf("NAT gateway %s is still %s: %s", id, m.Status.ValueString(), ctx.Err()))
+			detail := fmt.Sprintf("NAT gateway %s is still %s after %s; it carries on.", id, m.Status.ValueString(), limit)
+			if unread != nil {
+				detail += " The last read failed: " + unread.Error()
+			}
+			if !deleting {
+				detail += " Terraform marks it tainted: once it is active, `terraform untaint` keeps it and its public address; otherwise the next apply replaces it, with a new address."
+			}
+			diags.AddError("Timed out waiting for the NAT gateway", detail)
 			return diags
 		case <-timer.C:
 		}
@@ -173,16 +216,20 @@ func (r *natGatewayResource) wait(ctx context.Context, m *natGatewayModel, delet
 			gone, e := readGone(ctx, r.client, m.ProjectID.ValueString(), err)
 			switch {
 			case gone && deleting:
+				return diags
 			case gone:
 				diags.AddError("Create NAT gateway", fmt.Sprintf("NAT gateway %s no longer exists", id))
-			default:
-				diags.AddError("Read NAT gateway", e.Error())
+				return diags
 			}
-			return diags
+			unread = e
+			continue
 		}
-		if diags.Append(m.decode(ctx, response)...); diags.HasError() {
-			return diags
+		read := *m
+		if d := read.decode(ctx, response); d.HasError() {
+			unread = fmt.Errorf("%s", d[0].Detail())
+			continue
 		}
+		*m, unread = read, nil
 		switch status := m.Status.ValueString(); {
 		case deleting && status == "deleted", !deleting && status == "active":
 			return diags
@@ -254,6 +301,10 @@ func (r *natGatewayResource) Delete(ctx context.Context, req resource.DeleteRequ
 		resp.Diagnostics.AddError("Organization mismatch", err.Error())
 		return
 	}
+	limit, diags := m.timeout(ctx, "delete")
+	if resp.Diagnostics.Append(diags...); resp.Diagnostics.HasError() {
+		return
+	}
 	if _, err := r.client.Do(ctx, "network", "DELETE", r.path(m, m.ID.ValueString()), nil); err != nil {
 		if gone, e := readGone(ctx, r.client, m.ProjectID.ValueString(), err); !gone {
 			resp.Diagnostics.AddError("Delete NAT gateway", e.Error())
@@ -261,7 +312,7 @@ func (r *natGatewayResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 	// The delete is done, and its public address released, only once the gateway is gone.
-	resp.Diagnostics.Append(r.wait(ctx, &m, true)...)
+	resp.Diagnostics.Append(r.wait(ctx, &m, true, limit)...)
 }
 func (r *natGatewayResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	org, project, id, err := parseImport(req.ID, "nat_")
