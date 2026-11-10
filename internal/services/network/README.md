@@ -46,8 +46,9 @@ outside this table, including explicit subnet route-table association, are not
 managed by this first provider surface.
 
 `ezghcloud_nat_gateway` is served only with `EZGHCLOUD_PREVIEW_NAT_GATEWAY=1` until NAT Gateways
-launch, so releases and their generated docs leave it out. Its wire shape follows the design, not
-a served OpenAPI document: check it against the service's document before launch. Create and
-delete are asynchronous: the provider records the gateway from the accepted answer, then waits
-for the operation at its `Location`; a failed or interrupted create leaves the gateway in state.
+launch, so releases and their generated docs leave it out. Its wire shape was checked against network-stack's
+OpenAPI document at c397dce8. Create and
+delete are asynchronous and the gateway is its own operation: the provider records it from the
+accepted answer, then reads it until it is `active` (create) or until reading it answers 404
+(delete), for up to ten minutes; a failed or interrupted create leaves the gateway in state.
 Routes to a gateway aren't managed: the provider has no route-table resource.

@@ -21,9 +21,10 @@ import (
 func TestAccNetworkLifecycle(t *testing.T) {
 	// NAT Gateways aren't launched: the resource is served only with the preview variable.
 	t.Setenv("EZGHCLOUD_PREVIEW_NAT_GATEWAY", "1")
-	// natReads counts the reads of the NAT gateway's operation: the first of each operation
-	// answers it running, the next succeeded, and only then is the gateway active or gone.
-	natReads, natDeleting := 0, false
+	// The NAT gateway is its own operation, as network-api serves it: a create or delete answers
+	// 202 with the gateway and its own URL as Location; natReads counts the reads since, the
+	// first answering it provisioning or deleting, the next active or 404.
+	natReads := 0
 	var mu sync.Mutex
 	objects := map[string]map[string]any{}
 	versions := map[string]int{}
@@ -42,25 +43,19 @@ func TestAccNetworkLifecycle(t *testing.T) {
 			return
 		}
 		kind := parts[5]
-		const natOperation = "/v1/organizations/org_test/projects/prj_test/nat-gateway-operations/op_1"
-		if kind == "nat-gateway-operations" {
-			natReads++
-			status := "running"
-			if natReads > 1 {
-				status = "succeeded"
-				if natDeleting {
-					delete(objects, "nat-gateways")
-				} else {
-					objects["nat-gateways"]["status"] = "active"
-				}
-			}
-			w.Header().Set("Retry-After", "0")
-			json.NewEncoder(w).Encode(map[string]any{"id": "op_1", "status": status})
-			return
-		}
 		current := objects[kind]
+		if kind == "nat-gateways" && current != nil && r.Method == "GET" {
+			natReads++
+			if natReads > 1 && current["status"] == "provisioning" {
+				current["status"] = "active"
+			}
+			if natReads > 1 && current["status"] == "deleting" {
+				delete(objects, kind)
+				current = nil
+			}
+		}
 		if kind == "nat-gateways" && (r.Method == "POST" || r.Method == "DELETE") {
-			natReads, natDeleting = 0, r.Method == "DELETE"
+			natReads = 0
 			if r.Method == "POST" {
 				var body map[string]any
 				json.NewDecoder(r.Body).Decode(&body)
@@ -69,8 +64,8 @@ func TestAccNetworkLifecycle(t *testing.T) {
 					w.Write([]byte(`{"error":{"code":"invalid_request"}}`))
 					return
 				}
-				current = map[string]any{"id": "resource-uuid", "slug": ids[kind], "name": body["name"], "vpc": body["vpc"], "subnet": body["subnet"],
-					"publicIpv4Addresses": []map[string]any{{"id": "pip_aaaaaaaaaaaa", "address": "203.0.113.7"}}, "createdAt": "2026-11-10T00:00:00.000Z", "updatedAt": "2026-11-10T00:00:00.000Z"}
+				current = map[string]any{"id": "resource-uuid", "slug": ids[kind], "name": body["name"], "resourceName": "ezgh:test:" + ids[kind], "organizationId": "org_test", "projectId": "prj_test", "region": "test",
+					"vpc": body["vpc"], "subnet": body["subnet"], "publicIpv4Addresses": []map[string]any{{"id": "pip_aaaaaaaaaaaa", "address": "203.0.113.7"}}, "createdAt": "2026-11-10T00:00:00.000Z", "updatedAt": "2026-11-10T00:00:00.000Z"}
 				objects[kind] = current
 			}
 			if current == nil {
@@ -79,8 +74,8 @@ func TestAccNetworkLifecycle(t *testing.T) {
 				return
 			}
 			current["status"] = map[string]string{"POST": "provisioning", "DELETE": "deleting"}[r.Method]
-			w.Header().Set("Location", natOperation)
-			w.Header().Set("Retry-After", "0")
+			w.Header().Set("Location", "/v1/organizations/org_test/projects/prj_test/nat-gateways/resource-uuid")
+			w.Header().Set("Retry-After", "2")
 			w.WriteHeader(202)
 			json.NewEncoder(w).Encode(current)
 			return
@@ -199,7 +194,7 @@ data "ezghcloud_firewall" "test" {
 		ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(cloudprovider.New("test")())},
 		Steps: []resource.TestStep{
 			{Config: config("first", true, 22), Check: resource.ComposeAggregateTestCheckFunc(resource.TestCheckResourceAttr("ezghcloud_vpc.test", "id", ids["vpcs"]), resource.TestCheckResourceAttr("data.ezghcloud_subnet.test", "vpc_id", ids["vpcs"]), resource.TestCheckResourceAttr("data.ezghcloud_firewall.test", "rules.#", "1"),
-				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "id", ids["nat-gateways"]), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "status", "active"),
+				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "id", ids["nat-gateways"]), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "status", "active"), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "resource_name", "ezgh:test:"+ids["nat-gateways"]),
 				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "subnet_id", ids["subnets"]), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.#", "1"),
 				resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.0.id", "pip_aaaaaaaaaaaa"), resource.TestCheckResourceAttr("ezghcloud_nat_gateway.test", "public_ipv4_addresses.0.address", "203.0.113.7"))},
 			{ResourceName: "ezghcloud_nat_gateway.test", ImportState: true, ImportStateId: "org_test/prj_test/" + ids["nat-gateways"], ImportStateVerify: true},

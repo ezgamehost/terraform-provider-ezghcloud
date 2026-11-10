@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -31,6 +32,7 @@ type natGatewayModel struct {
 	VPCID               types.String `tfsdk:"vpc_id"`
 	SubnetID            types.String `tfsdk:"subnet_id"`
 	PublicIPv4Addresses types.List   `tfsdk:"public_ipv4_addresses"`
+	ResourceName        types.String `tfsdk:"resource_name"`
 	Status              types.String `tfsdk:"status"`
 }
 type natAddressWire struct {
@@ -42,6 +44,7 @@ type natGatewayWire struct {
 	Name                string           `json:"name"`
 	VPC                 string           `json:"vpc"`
 	Subnet              string           `json:"subnet"`
+	ResourceName        string           `json:"resourceName"`
 	PublicIPv4Addresses []natAddressWire `json:"publicIpv4Addresses"`
 	Status              string           `json:"status"`
 }
@@ -53,6 +56,7 @@ func (m *natGatewayModel) fromWire(ctx context.Context, v natGatewayWire) diag.D
 	m.Name = types.StringValue(v.Name)
 	m.VPCID = types.StringValue(v.VPC)
 	m.SubnetID = types.StringValue(v.Subnet)
+	m.ResourceName = types.StringValue(v.ResourceName)
 	m.Status = types.StringValue(v.Status)
 	if v.PublicIPv4Addresses == nil {
 		v.PublicIPv4Addresses = []natAddressWire{}
@@ -82,7 +86,8 @@ func (r *natGatewayResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					"id":      schema.StringAttribute{Computed: true, Description: "Public IPv4 address ID (pip_)."},
 					"address": schema.StringAttribute{Computed: true, Description: "The IPv4 address."},
 				}}},
-			"status": schema.StringAttribute{Computed: true, Description: "Current service status."},
+			"resource_name": schema.StringAttribute{Computed: true, Description: "IAM resource name.", PlanModifiers: keep},
+			"status":        schema.StringAttribute{Computed: true, Description: "Current service status."},
 		},
 	}
 }
@@ -136,20 +141,56 @@ func (r *natGatewayResource) Create(ctx context.Context, req resource.CreateRequ
 	// The gateway exists from the accepted answer on: it's in state before the wait, so a failed
 	// or interrupted wait leaves it tracked rather than orphaned.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
-	if err = r.client.Wait(ctx, "network", accepted.Header.Get("Location")); err != nil {
-		resp.Diagnostics.AddError("Create NAT gateway", err.Error())
+	if resp.Diagnostics.HasError() {
 		return
 	}
-	response, err := r.client.Do(ctx, "network", "GET", r.path(m, m.ID.ValueString()), nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Read NAT gateway", err.Error())
-		return
-	}
-	resp.Diagnostics.Append(m.decode(ctx, response)...)
+	resp.Diagnostics.Append(r.wait(ctx, &m, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
+}
+
+// wait follows an accepted create or delete. The gateway is its own operation: it's read until
+// it's active (create), or until reading it answers 404 (delete), for up to ten minutes. A create
+// leaves m as last read.
+func (r *natGatewayResource) wait(ctx context.Context, m *natGatewayModel, deleting bool) diag.Diagnostics {
+	var diags diag.Diagnostics
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	id := m.ID.ValueString()
+	for {
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			diags.AddError("Wait for NAT gateway", fmt.Sprintf("NAT gateway %s is still %s: %s", id, m.Status.ValueString(), ctx.Err()))
+			return diags
+		case <-timer.C:
+		}
+		response, err := r.client.Do(ctx, "network", "GET", r.path(*m, id), nil)
+		if err != nil {
+			gone, e := readGone(ctx, r.client, m.ProjectID.ValueString(), err)
+			switch {
+			case gone && deleting:
+			case gone:
+				diags.AddError("Create NAT gateway", fmt.Sprintf("NAT gateway %s no longer exists", id))
+			default:
+				diags.AddError("Read NAT gateway", e.Error())
+			}
+			return diags
+		}
+		if diags.Append(m.decode(ctx, response)...); diags.HasError() {
+			return diags
+		}
+		switch status := m.Status.ValueString(); {
+		case deleting && status == "deleted", !deleting && status == "active":
+			return diags
+		case !deleting && (status == "deleting" || status == "deleted"):
+			diags.AddError("Create NAT gateway", fmt.Sprintf("NAT gateway %s is %s", id, status))
+			return diags
+		}
+	}
 }
 func (r *natGatewayResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var m natGatewayModel
@@ -213,17 +254,14 @@ func (r *natGatewayResource) Delete(ctx context.Context, req resource.DeleteRequ
 		resp.Diagnostics.AddError("Organization mismatch", err.Error())
 		return
 	}
-	accepted, err := r.client.Do(ctx, "network", "DELETE", r.path(m, m.ID.ValueString()), nil)
-	if err != nil {
+	if _, err := r.client.Do(ctx, "network", "DELETE", r.path(m, m.ID.ValueString()), nil); err != nil {
 		if gone, e := readGone(ctx, r.client, m.ProjectID.ValueString(), err); !gone {
 			resp.Diagnostics.AddError("Delete NAT gateway", e.Error())
 		}
 		return
 	}
-	// The delete is done, and its public address released, only once its operation has succeeded.
-	if err = r.client.Wait(ctx, "network", accepted.Header.Get("Location")); err != nil {
-		resp.Diagnostics.AddError("Delete NAT gateway", err.Error())
-	}
+	// The delete is done, and its public address released, only once the gateway is gone.
+	resp.Diagnostics.Append(r.wait(ctx, &m, true)...)
 }
 func (r *natGatewayResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	org, project, id, err := parseImport(req.ID, "nat_")
