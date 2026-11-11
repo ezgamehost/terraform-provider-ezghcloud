@@ -3,7 +3,6 @@ package network
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
@@ -17,11 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
-
-// natPreview is whether NAT Gateways, not launched yet, are served: only with
-// EZGHCLOUD_PREVIEW_NAT_GATEWAY=1 (the tests set it), so releases and their Registry docs leave
-// the resource out. At launch, drop it, add the README rows and run make docs.
-func natPreview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_NAT_GATEWAY") == "1" }
 
 type natGatewayResource struct{ client *client.Client }
 type natGatewayModel struct {

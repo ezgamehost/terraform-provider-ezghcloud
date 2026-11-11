@@ -1,7 +1,6 @@
 package network_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,15 +11,12 @@ import (
 
 	cloudprovider "github.com/ezgamehost/terraform-provider-ezghcloud/internal/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccNetworkLifecycle(t *testing.T) {
-	// NAT Gateways aren't launched: the resource is served only with the preview variable.
-	t.Setenv("EZGHCLOUD_PREVIEW_NAT_GATEWAY", "1")
 	// The NAT gateway is its own operation, as network-api serves it: a create or delete answers
 	// 202 with the gateway and its own URL as Location; natReads counts the reads since, the
 	// first answering it provisioning or deleting, the next active or 404.
@@ -219,21 +215,4 @@ data "ezghcloud_firewall" "test" {
 			return nil
 		},
 	})
-}
-
-// Until NAT Gateways launch the provider serves the resource only with the preview variable, so
-// releases and their generated docs leave it out.
-func TestNATGatewayNeedsPreview(t *testing.T) {
-	for preview, want := range map[string]bool{"": false, "1": true} {
-		t.Setenv("EZGHCLOUD_PREVIEW_NAT_GATEWAY", preview)
-		var resp fwresource.MetadataResponse
-		found := false
-		for _, r := range cloudprovider.New("test")().Resources(context.Background()) {
-			r().Metadata(context.Background(), fwresource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
-			found = found || resp.TypeName == "ezghcloud_nat_gateway"
-		}
-		if found != want {
-			t.Errorf("preview %q: served %t, want %t", preview, found, want)
-		}
-	}
 }

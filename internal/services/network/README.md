@@ -46,10 +46,8 @@ Read-only lookups exist for VPC, subnet and firewall by exact canonical ID. Fiel
 outside this table, including explicit subnet route-table association, are not
 managed by this first provider surface.
 
-`ezghcloud_nat_gateway` is served only with `EZGHCLOUD_PREVIEW_NAT_GATEWAY=1` until NAT Gateways
-launch, so releases and their generated docs leave it out. Its wire shape was checked against network-stack's
-OpenAPI document at c397dce8. Create and
-delete are asynchronous and the gateway is its own operation: the provider records it from the
+`ezghcloud_nat_gateway`'s wire shape was checked against network-stack's OpenAPI document at
+c397dce8. Create and delete are asynchronous and the gateway is its own operation: the provider records it from the
 accepted answer, then reads it until it is `active` (create) or until reading it answers 404
 (delete), for the `timeouts` attribute's `create` and `delete` (20 minutes each by default). A read
 that fails during the wait is tried again, whatever the failure; only the limit, or the gateway
