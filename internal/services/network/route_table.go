@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -293,10 +294,31 @@ func (r *routeTableResource) Delete(ctx context.Context, req resource.DeleteRequ
 		resp.Diagnostics.AddError("Organization mismatch", err.Error())
 		return
 	}
-	if err := deleteResource(ctx, r.client, "network", m.ProjectID.ValueString(), "route-tables", m.ID.ValueString()); err != nil {
-		resp.Diagnostics.AddError("Delete route table", err.Error())
+	// A subnet moved off this table in the same apply isn't ordered before this delete (it no
+	// longer refers to the table), so the server may still see it associated: wait it out briefly.
+	deadline := time.Now().Add(routeTableInUseWait)
+	for {
+		err := deleteResource(ctx, r.client, "network", m.ProjectID.ValueString(), "route-tables", m.ID.ValueString())
+		var e *client.Error
+		if err == nil {
+			return
+		}
+		if !errors.As(err, &e) || e.Code != "route_table_in_use" || time.Now().After(deadline) {
+			resp.Diagnostics.AddError("Delete route table", err.Error())
+			return
+		}
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddError("Delete route table", ctx.Err().Error())
+			return
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
+
+// routeTableInUseWait is how long a delete waits for subnets to leave the table.
+var routeTableInUseWait = time.Minute
+
 func (r *routeTableResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	org, project, id, err := parseImport(req.ID, "rtb_")
 	if err != nil {
