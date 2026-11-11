@@ -22,7 +22,7 @@ import (
 
 func Resources() []func() resource.Resource {
 	return []func() resource.Resource{func() resource.Resource { return &vpcResource{} }, func() resource.Resource { return &subnetResource{} }, func() resource.Resource { return &firewallResource{} },
-		func() resource.Resource { return &natGatewayResource{} }}
+		func() resource.Resource { return &natGatewayResource{} }, func() resource.Resource { return &routeTableResource{} }}
 }
 func DataSources() []func() datasource.DataSource {
 	return []func() datasource.DataSource{func() datasource.DataSource { return &lookup{kind: "vpc"} }, func() datasource.DataSource { return &lookup{kind: "subnet"} }, func() datasource.DataSource { return &lookup{kind: "firewall"} }}

@@ -27,6 +27,7 @@ Manage an EZGH Cloud subnet.
 - `auto_assign_public_ipv4` (Boolean) Default public IPv4 allocation for new interfaces.
 - `auto_assign_public_ipv6` (Boolean) Default public IPv6 allocation for new interfaces.
 - `description` (String) Optional resource description; null clears it.
+- `route_table_id` (String) Route table (rtb_) the subnet uses. Set it to associate the subnet with a table of its VPC. Omitted, it reports the table in use (the VPC's main table until the subnet is associated with another) and nothing is changed; removing it from the configuration likewise leaves the subnet on its current table. To return a subnet to the main table, set this to the main table's ID.
 - `tags` (Map of String) Customer resource tags.
 
 ### Read-Only

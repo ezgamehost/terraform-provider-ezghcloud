@@ -28,6 +28,7 @@ type subnetModel struct {
 	VPCID                types.String `tfsdk:"vpc_id"`
 	AutoAssignPublicIPv4 types.Bool   `tfsdk:"auto_assign_public_ipv4"`
 	AutoAssignPublicIPv6 types.Bool   `tfsdk:"auto_assign_public_ipv6"`
+	RouteTableID         types.String `tfsdk:"route_table_id"`
 }
 type subnetWire struct {
 	ID                   string            `json:"id"`
@@ -42,6 +43,7 @@ type subnetWire struct {
 	VPCID                string            `json:"vpc"`
 	AutoAssignPublicIPv4 bool              `json:"autoAssignPublicIpv4"`
 	AutoAssignPublicIPv6 bool              `json:"autoAssignPublicIpv6"`
+	RouteTable           string            `json:"routeTable"`
 }
 
 func (m *subnetModel) fromWire(ctx context.Context, v subnetWire) {
@@ -59,6 +61,11 @@ func (m *subnetModel) fromWire(ctx context.Context, v subnetWire) {
 	m.VPCID = types.StringValue(v.VPCID)
 	m.AutoAssignPublicIPv4 = types.BoolValue(v.AutoAssignPublicIPv4)
 	m.AutoAssignPublicIPv6 = types.BoolValue(v.AutoAssignPublicIPv6)
+	// The effective table: the subnet's own, else the VPC's main one.
+	m.RouteTableID = types.StringNull()
+	if v.RouteTable != "" {
+		m.RouteTableID = types.StringValue(v.RouteTable)
+	}
 }
 func (r *subnetResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_subnet"
@@ -70,6 +77,8 @@ func (r *subnetResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 	a["vpc_id"] = schema.StringAttribute{Required: true, Description: "Parent VPC ID.", PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}}
 	a["auto_assign_public_ipv4"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Default public IPv4 allocation for new interfaces."}
 	a["auto_assign_public_ipv6"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Default public IPv6 allocation for new interfaces."}
+	a["route_table_id"] = schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+		Description: "Route table (rtb_) the subnet uses. Set it to associate the subnet with a table of its VPC. Omitted, it reports the table in use (the VPC's main table until the subnet is associated with another) and nothing is changed; removing it from the configuration likewise leaves the subnet on its current table. To return a subnet to the main table, set this to the main table's ID."}
 	resp.Schema = schema.Schema{Description: "Manage an EZGH Cloud subnet.", Attributes: a}
 }
 func (r *subnetResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -106,16 +115,24 @@ func (r *subnetResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Decode subnet", err.Error())
 		return
 	}
-	planned4, planned6 := m.AutoAssignPublicIPv4, m.AutoAssignPublicIPv6
+	planned4, planned6, table := m.AutoAssignPublicIPv4, m.AutoAssignPublicIPv6, m.RouteTableID
 	m.fromWire(ctx, v)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	m.AutoAssignPublicIPv4, m.AutoAssignPublicIPv6 = planned4, planned6
+	patch := map[string]any{}
 	if m.AutoAssignPublicIPv4.ValueBool() || m.AutoAssignPublicIPv6.ValueBool() {
-		// Subnet launch defaults are patched after the create endpoint assigns its ID.
+		patch["autoAssignPublicIpv4"], patch["autoAssignPublicIpv6"] = m.AutoAssignPublicIPv4.ValueBool(), m.AutoAssignPublicIPv6.ValueBool()
+	}
+	// Unknown when the configuration names no table: the subnet stays on the VPC's main one.
+	if !table.IsUnknown() && !table.IsNull() {
+		patch["routeTable"] = table.ValueString()
+	}
+	if len(patch) > 0 {
+		// Launch defaults and the route table are patched after the create endpoint assigns its ID.
 		var updated subnetWire
-		response, err = r.client.Do(ctx, "network", "PATCH", client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "subnets", m.ID.ValueString()), map[string]any{"autoAssignPublicIpv4": m.AutoAssignPublicIPv4.ValueBool(), "autoAssignPublicIpv6": m.AutoAssignPublicIPv6.ValueBool()})
+		response, err = r.client.Do(ctx, "network", "PATCH", client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "subnets", m.ID.ValueString()), patch)
 		if err != nil {
-			resp.Diagnostics.AddError("Set subnet launch defaults", err.Error())
+			resp.Diagnostics.AddError("Set subnet launch defaults and route table", err.Error())
 			return
 		}
 		if err = response.Decode(&updated); err != nil {
@@ -155,8 +172,9 @@ func (r *subnetResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 }
 func (r *subnetResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var m subnetModel
+	var m, prior subnetModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -172,6 +190,10 @@ func (r *subnetResource) Update(ctx context.Context, req resource.UpdateRequest,
 	body := map[string]any{"name": m.Name.ValueString(), "description": m.Description.ValueStringPointer(), "tags": tags}
 	body["autoAssignPublicIpv4"] = m.AutoAssignPublicIPv4.ValueBool()
 	body["autoAssignPublicIpv6"] = m.AutoAssignPublicIPv6.ValueBool()
+	// Only a configured change of table is sent: an omitted route_table_id never re-associates.
+	if !m.RouteTableID.IsUnknown() && !m.RouteTableID.IsNull() && !m.RouteTableID.Equal(prior.RouteTableID) {
+		body["routeTable"] = m.RouteTableID.ValueString()
+	}
 	response, err := r.client.Do(ctx, "network", "PATCH", client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "subnets", m.ID.ValueString()), body)
 	if err != nil {
 		resp.Diagnostics.AddError("Update subnet", err.Error())
