@@ -272,3 +272,21 @@ func TestVolumeDeleteBusyOtherStatusKeeps409(t *testing.T) {
 		t.Fatalf("diag=%v gets=%d", resp.Diagnostics, gets)
 	}
 }
+
+// Host recovery's statuses (compute's K10): a recovering instance reads as transitional, one
+// waiting for capacity (impaired, with a reason the provider doesn't model) as settled.
+func TestReadInstanceRecoveryStatuses(t *testing.T) {
+	for body, transitional := range map[string]bool{
+		`{"id":"i1","slug":"ins_123456789abc","status":"recovering","statusReason":null}`:                                                                                                 true,
+		`{"id":"i1","slug":"ins_123456789abc","status":"impaired","statusReason":{"code":"recovery_waiting_for_capacity","message":"The instance restarts when capacity is available."}}`: false,
+	} {
+		c := testClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) })
+		v, err := readInstance(context.Background(), c, "prj_test", "ins_123456789abc")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if transitionalInstance(v.Status) != transitional {
+			t.Errorf("%s: transitional %v", v.Status, !transitional)
+		}
+	}
+}
