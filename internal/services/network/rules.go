@@ -12,16 +12,17 @@ import (
 )
 
 type ruleModel struct {
-	Direction      types.String `tfsdk:"direction"`
-	Protocol       types.String `tfsdk:"protocol"`
-	PeerCIDR       types.String `tfsdk:"peer_cidr"`
-	PeerFirewallID types.String `tfsdk:"peer_firewall_id"`
-	PeerDatabaseID types.String `tfsdk:"peer_database_id"`
-	PortsFrom      types.Int64  `tfsdk:"ports_from"`
-	PortsTo        types.Int64  `tfsdk:"ports_to"`
-	ICMPType       types.Int64  `tfsdk:"icmp_type"`
-	ICMPCode       types.Int64  `tfsdk:"icmp_code"`
-	Description    types.String `tfsdk:"description"`
+	Direction           types.String `tfsdk:"direction"`
+	Protocol            types.String `tfsdk:"protocol"`
+	PeerCIDR            types.String `tfsdk:"peer_cidr"`
+	PeerFirewallID      types.String `tfsdk:"peer_firewall_id"`
+	PeerDatabaseID      types.String `tfsdk:"peer_database_id"`
+	PeerSandboxSubnetID types.String `tfsdk:"peer_sandbox_subnet_id"`
+	PortsFrom           types.Int64  `tfsdk:"ports_from"`
+	PortsTo             types.Int64  `tfsdk:"ports_to"`
+	ICMPType            types.Int64  `tfsdk:"icmp_type"`
+	ICMPCode            types.Int64  `tfsdk:"icmp_code"`
+	Description         types.String `tfsdk:"description"`
 }
 type ruleWire struct {
 	Direction   string     `json:"direction"`
@@ -32,9 +33,10 @@ type ruleWire struct {
 	Description string     `json:"description"`
 }
 type rulePeer struct {
-	CIDR       string `json:"cidr,omitempty"`
-	FirewallID string `json:"firewallId,omitempty"`
-	Database   string `json:"database,omitempty"`
+	CIDR          string `json:"cidr,omitempty"`
+	FirewallID    string `json:"firewallId,omitempty"`
+	Database      string `json:"database,omitempty"`
+	SandboxSubnet string `json:"sandboxSubnet,omitempty"`
 }
 type rulePorts struct {
 	From int64 `json:"from"`
@@ -47,21 +49,22 @@ type ruleICMP struct {
 
 func ruleTypes() map[string]attr.Type {
 	return map[string]attr.Type{
-		"direction": types.StringType, "protocol": types.StringType, "peer_cidr": types.StringType, "peer_firewall_id": types.StringType, "peer_database_id": types.StringType, "ports_from": types.Int64Type, "ports_to": types.Int64Type, "icmp_type": types.Int64Type, "icmp_code": types.Int64Type, "description": types.StringType,
+		"direction": types.StringType, "protocol": types.StringType, "peer_cidr": types.StringType, "peer_firewall_id": types.StringType, "peer_database_id": types.StringType, "peer_sandbox_subnet_id": types.StringType, "ports_from": types.Int64Type, "ports_to": types.Int64Type, "icmp_type": types.Int64Type, "icmp_code": types.Int64Type, "description": types.StringType,
 	}
 }
 func ruleAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
-		"direction":        schema.StringAttribute{Required: true, Description: "inbound or outbound."},
-		"protocol":         schema.StringAttribute{Required: true, Description: "tcp, udp, icmp, icmpv6, all, or another IANA protocol number as a string. Use named forms for 6, 17, 1 and 58."},
-		"peer_cidr":        schema.StringAttribute{Optional: true, Description: "Canonical IPv4 or IPv6 peer prefix. Exactly one peer selector is required."},
-		"peer_firewall_id": schema.StringAttribute{Optional: true, Description: "Peer firewall ID. Exactly one peer selector is required."},
-		"peer_database_id": schema.StringAttribute{Optional: true, Description: "Peer database ID (dbi_) in this project: traffic to and from it. Exactly one peer selector is required."},
-		"ports_from":       schema.Int64Attribute{Optional: true, Description: "First TCP/UDP port (1–65535); omit both port fields for all ports."},
-		"ports_to":         schema.Int64Attribute{Optional: true, Description: "Last TCP/UDP port (1–65535)."},
-		"icmp_type":        schema.Int64Attribute{Optional: true, Description: "ICMP type (0–255); omit for every type."},
-		"icmp_code":        schema.Int64Attribute{Optional: true, Description: "ICMP code (0–255); omit for every code of the selected type."},
-		"description":      schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), Description: "Rule description."},
+		"direction":              schema.StringAttribute{Required: true, Description: "inbound or outbound."},
+		"protocol":               schema.StringAttribute{Required: true, Description: "tcp, udp, icmp, icmpv6, all, or another IANA protocol number as a string. Use named forms for 6, 17, 1 and 58."},
+		"peer_cidr":              schema.StringAttribute{Optional: true, Description: "Canonical IPv4 or IPv6 peer prefix. Exactly one peer selector is required."},
+		"peer_firewall_id":       schema.StringAttribute{Optional: true, Description: "Peer firewall ID. Exactly one peer selector is required."},
+		"peer_sandbox_subnet_id": schema.StringAttribute{Optional: true, Description: "Peer sandbox subnet ID (sbn_): traffic to and from the sandboxes started in it. Exactly one peer selector is required."},
+		"peer_database_id":       schema.StringAttribute{Optional: true, Description: "Peer database ID (dbi_) in this project: traffic to and from it. Exactly one peer selector is required."},
+		"ports_from":             schema.Int64Attribute{Optional: true, Description: "First TCP/UDP port (1–65535); omit both port fields for all ports."},
+		"ports_to":               schema.Int64Attribute{Optional: true, Description: "Last TCP/UDP port (1–65535)."},
+		"icmp_type":              schema.Int64Attribute{Optional: true, Description: "ICMP type (0–255); omit for every type."},
+		"icmp_code":              schema.Int64Attribute{Optional: true, Description: "ICMP code (0–255); omit for every code of the selected type."},
+		"description":            schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), Description: "Rule description."},
 	}
 }
 
@@ -70,7 +73,7 @@ func encodeRules(models []ruleModel) ([]ruleWire, error) {
 	for i, m := range models {
 		// Unknown fields are checked when they become known at apply. Config validation
 		// avoids treating references to resources not created yet as empty strings.
-		if m.Direction.IsUnknown() || m.Protocol.IsUnknown() || m.PeerCIDR.IsUnknown() || m.PeerFirewallID.IsUnknown() || m.PeerDatabaseID.IsUnknown() || m.PortsFrom.IsUnknown() || m.PortsTo.IsUnknown() || m.ICMPType.IsUnknown() || m.ICMPCode.IsUnknown() {
+		if m.Direction.IsUnknown() || m.Protocol.IsUnknown() || m.PeerCIDR.IsUnknown() || m.PeerFirewallID.IsUnknown() || m.PeerDatabaseID.IsUnknown() || m.PeerSandboxSubnetID.IsUnknown() || m.PortsFrom.IsUnknown() || m.PortsTo.IsUnknown() || m.ICMPType.IsUnknown() || m.ICMPCode.IsUnknown() {
 			continue
 		}
 		fail := func(message string) ([]ruleWire, error) { return nil, fmt.Errorf("rules[%d]: %s", i, message) }
@@ -89,15 +92,15 @@ func encodeRules(models []ruleModel) ([]ruleWire, error) {
 				return fail("use the named protocol tcp, udp, icmp or icmpv6")
 			}
 		}
-		cidr, firewall, database := m.PeerCIDR.ValueString(), m.PeerFirewallID.ValueString(), m.PeerDatabaseID.ValueString()
+		cidr, firewall, database, sandboxSubnet := m.PeerCIDR.ValueString(), m.PeerFirewallID.ValueString(), m.PeerDatabaseID.ValueString(), m.PeerSandboxSubnetID.ValueString()
 		peers := 0
-		for _, p := range []string{cidr, firewall, database} {
+		for _, p := range []string{cidr, firewall, database, sandboxSubnet} {
 			if p != "" {
 				peers++
 			}
 		}
 		if peers != 1 {
-			return fail("set exactly one of peer_cidr, peer_firewall_id and peer_database_id")
+			return fail("set exactly one of peer_cidr, peer_firewall_id, peer_database_id and peer_sandbox_subnet_id")
 		}
 		if cidr != "" {
 			p, err := netip.ParsePrefix(cidr)
@@ -105,7 +108,7 @@ func encodeRules(models []ruleModel) ([]ruleWire, error) {
 				return fail("peer_cidr must be a canonical prefix")
 			}
 		}
-		r := ruleWire{Direction: m.Direction.ValueString(), Protocol: protocol, Peer: rulePeer{CIDR: cidr, FirewallID: firewall, Database: database}, Description: m.Description.ValueString()}
+		r := ruleWire{Direction: m.Direction.ValueString(), Protocol: protocol, Peer: rulePeer{CIDR: cidr, FirewallID: firewall, Database: database, SandboxSubnet: sandboxSubnet}, Description: m.Description.ValueString()}
 		if m.PortsFrom.IsNull() != m.PortsTo.IsNull() {
 			return fail("ports_from and ports_to must be set together")
 		}
@@ -147,7 +150,7 @@ func encodeRules(models []ruleModel) ([]ruleWire, error) {
 func decodeRules(rules []ruleWire) []ruleModel {
 	result := make([]ruleModel, 0, len(rules))
 	for _, r := range rules {
-		m := ruleModel{Direction: types.StringValue(r.Direction), Protocol: types.StringValue(r.Protocol), PeerCIDR: types.StringNull(), PeerFirewallID: types.StringNull(), PeerDatabaseID: types.StringNull(), PortsFrom: types.Int64Null(), PortsTo: types.Int64Null(), ICMPType: types.Int64Null(), ICMPCode: types.Int64Null(), Description: types.StringValue(r.Description)}
+		m := ruleModel{Direction: types.StringValue(r.Direction), Protocol: types.StringValue(r.Protocol), PeerCIDR: types.StringNull(), PeerFirewallID: types.StringNull(), PeerDatabaseID: types.StringNull(), PeerSandboxSubnetID: types.StringNull(), PortsFrom: types.Int64Null(), PortsTo: types.Int64Null(), ICMPType: types.Int64Null(), ICMPCode: types.Int64Null(), Description: types.StringValue(r.Description)}
 		if r.Peer.CIDR != "" {
 			m.PeerCIDR = types.StringValue(r.Peer.CIDR)
 		}
@@ -156,6 +159,9 @@ func decodeRules(rules []ruleWire) []ruleModel {
 		}
 		if r.Peer.Database != "" {
 			m.PeerDatabaseID = types.StringValue(r.Peer.Database)
+		}
+		if r.Peer.SandboxSubnet != "" {
+			m.PeerSandboxSubnetID = types.StringValue(r.Peer.SandboxSubnet)
 		}
 		if r.Ports != nil {
 			m.PortsFrom = types.Int64Value(r.Ports.From)

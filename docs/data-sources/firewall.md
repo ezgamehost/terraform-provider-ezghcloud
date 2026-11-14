@@ -43,6 +43,7 @@ Read-Only:
 - `peer_cidr` (String) Firewall rule peer_cidr.
 - `peer_database_id` (String) Firewall rule peer_database_id.
 - `peer_firewall_id` (String) Firewall rule peer_firewall_id.
+- `peer_sandbox_subnet_id` (String) Firewall rule peer_sandbox_subnet_id.
 - `ports_from` (Number) Firewall rule ports_from.
 - `ports_to` (Number) Firewall rule ports_to.
 - `protocol` (String) Firewall rule protocol.

@@ -290,3 +290,23 @@ func TestRuleDatabasePeer(t *testing.T) {
 		t.Fatal("accepted a database and a firewall peer together")
 	}
 }
+
+func TestRulePeerSandboxSubnet(t *testing.T) {
+	rule := ruleModel{Direction: types.StringValue("inbound"), Protocol: types.StringValue("tcp"), PeerSandboxSubnetID: types.StringValue("sbn_4k2m9x0a7qpe"), PortsFrom: types.Int64Value(443), PortsTo: types.Int64Value(443)}
+	wire, err := encodeRules([]ruleModel{rule})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(wire[0].Peer)
+	if string(raw) != `{"sandboxSubnet":"sbn_4k2m9x0a7qpe"}` {
+		t.Fatalf("peer = %s", raw)
+	}
+	decoded := decodeRules(wire)
+	if decoded[0].PeerSandboxSubnetID.ValueString() != "sbn_4k2m9x0a7qpe" || !decoded[0].PeerCIDR.IsNull() || !decoded[0].PeerDatabaseID.IsNull() {
+		t.Fatalf("%+v", decoded[0])
+	}
+	rule.PeerCIDR = types.StringValue("10.0.0.0/8")
+	if _, err := encodeRules([]ruleModel{rule}); err == nil {
+		t.Fatal("accepted a sandbox subnet and a CIDR peer together")
+	}
+}
