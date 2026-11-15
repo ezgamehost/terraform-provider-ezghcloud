@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -40,17 +39,8 @@ const service = "waf"
 
 var prefixedID = regexp.MustCompile(`^[a-z]+_[a-z0-9]{12}$`)
 
-// CDNPreview is whether ezghcloud_cdn_distribution_waf is served: only with EZGHCLOUD_PREVIEW_CDN_WAF=1
-// (its tests set it) until the CDN WAF launches, so releases and their Registry docs leave it out.
-// At launch, drop it and run make docs.
-func CDNPreview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_CDN_WAF") == "1" }
-
 func Resources() []func() resource.Resource {
-	out := []func() resource.Resource{func() resource.Resource { return &wafResource{} }, func() resource.Resource { return &loadBalancerWAFResource{} }}
-	if CDNPreview() {
-		out = append(out, func() resource.Resource { return &cdnDistributionWAFResource{} })
-	}
-	return out
+	return []func() resource.Resource{func() resource.Resource { return &wafResource{} }, func() resource.Resource { return &loadBalancerWAFResource{} }, func() resource.Resource { return &cdnDistributionWAFResource{} }}
 }
 func DataSources() []func() datasource.DataSource {
 	return []func() datasource.DataSource{func() datasource.DataSource { return &managedRuleSetsDataSource{} }}
