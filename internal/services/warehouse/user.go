@@ -37,7 +37,7 @@ func databaseNameProblem(name string) string {
 	switch {
 	case !databaseName.MatchString(name):
 		return "Use 1–64 letters, digits and underscores, not starting with a digit."
-	case name == "system" || name == "information_schema" || name == "INFORMATION_SCHEMA" || name == "default" || strings.HasPrefix(name, "ezgh_"):
+	case name == "system" || strings.EqualFold(name, "information_schema") || name == "default" || strings.HasPrefix(name, "ezgh_"):
 		return name + " is reserved."
 	}
 	return ""
@@ -127,6 +127,43 @@ func (*userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *r
 }
 func (r *userResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	configure(req.ProviderData, &resp.Diagnostics, &r.client)
+}
+
+// ValidateConfig refuses what the API refuses: grants without preset custom, custom without a
+// grant, and a privilege written twice in one grant.
+func (r *userResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var m userModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &m)...)
+	if resp.Diagnostics.HasError() || m.Preset.IsUnknown() || m.Grants.IsUnknown() {
+		return
+	}
+	custom := m.Preset.ValueString() == "custom"
+	some := !m.Grants.IsNull() && len(m.Grants.Elements()) > 0
+	switch {
+	case some && !custom:
+		resp.Diagnostics.AddAttributeError(path.Root("grants"), "grants need preset custom", "Set preset = \"custom\" to give grants.")
+	case custom && !some:
+		resp.Diagnostics.AddAttributeError(path.Root("grants"), "preset custom needs grants", "Give at least one grant.")
+	}
+	if !some {
+		return
+	}
+	var grants []grant
+	resp.Diagnostics.Append(m.Grants.ElementsAs(ctx, &grants, false)...)
+	for i, g := range grants {
+		if g.Privileges.IsUnknown() {
+			continue
+		}
+		var ps []string
+		resp.Diagnostics.Append(g.Privileges.ElementsAs(ctx, &ps, false)...)
+		seen := map[string]bool{}
+		for _, p := range ps {
+			if seen[p] {
+				resp.Diagnostics.AddAttributeError(path.Root("grants").AtListIndex(i).AtName("privileges"), "A privilege written twice", p+" is written twice.")
+			}
+			seen[p] = true
+		}
+	}
 }
 
 func (m *userModel) path(c *client.Client, extra ...string) string {

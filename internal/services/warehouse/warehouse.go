@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -116,19 +117,25 @@ func (*warehouseResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		return schema.Int64Attribute{Optional: true, Computed: true, Description: d, PlanModifiers: keepInt}
 	}
 	resp.Schema = schema.Schema{Description: "A managed ClickHouse warehouse in a subnet of your VPC: 1 to 8 shards, each with 1 to 3 replicas. Clients connect over HTTPS and the native protocol with TLS, with a username and password. It comes with the database default and the user app, whose password is in a Secret (app_secret_id). This resource never creates, changes or deletes a database or a user: use ezghcloud_warehouse_database and ezghcloud_warehouse_user. Destroying it deletes the warehouse, every database and table in it, its backups and its users' Secrets.", Attributes: map[string]schema.Attribute{
-		"id":                             computed("Warehouse ID (whs_)."),
-		"organization_id":                computed("Organization managed by the configured provider."),
-		"project_id":                     schema.StringAttribute{Required: true, Description: "Project identifier. Changing it replaces the warehouse.", PlanModifiers: replace},
-		"resource_name":                  computed("IAM resource name."),
-		"name":                           schema.StringAttribute{Required: true, Description: "Warehouse name. Changes in place."},
-		"description":                    schema.StringAttribute{Optional: true, Description: "Optional description; null clears it."},
-		"tags":                           schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Resource tags."},
-		"engine_version":                 schema.StringAttribute{Required: true, Description: "ClickHouse LTS version, 26.3 or 26.8. A newer version upgrades in place, one node at a time (one-way); an older one is refused at plan."},
-		"shards":                         schema.Int64Attribute{Optional: true, Computed: true, Description: "Shards, 1 to 8 (1 when left out). More shards are added in place: existing data stays on the current shards, and rows inserted through a Distributed table spread across all shards by its sharding key. Fewer are refused at plan.", PlanModifiers: keepInt},
-		"replicas":                       schema.Int64Attribute{Optional: true, Computed: true, Description: "Replicas of each shard, 1 to 3 (1 when left out). Each shard keeps serving through the loss of one node with 2 or 3 replicas. More are added in place; fewer are refused at plan.", PlanModifiers: keepInt},
-		"keeper":                         schema.StringAttribute{Optional: true, Computed: true, Description: "Where Keeper runs: dedicated or colocated (3 or more nodes of at least 8 vCPUs and 32 GiB). Null for 1 shard × 1 replica; dedicated when left out on anything larger. Changes in place.", PlanModifiers: keepString},
-		"instance_type":                  schema.StringAttribute{Required: true, Description: "Every node's instance type, with at least 8 GiB of memory. Changes in place, one replica of each shard at a time."},
-		"storage_kind":                   schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("volume"), Description: "volume. Changing it replaces the warehouse.", PlanModifiers: replace},
+		"id":              computed("Warehouse ID (whs_)."),
+		"organization_id": computed("Organization managed by the configured provider."),
+		"project_id":      schema.StringAttribute{Required: true, Description: "Project identifier. Changing it replaces the warehouse.", PlanModifiers: replace},
+		"resource_name":   computed("IAM resource name."),
+		"name":            schema.StringAttribute{Required: true, Description: "Warehouse name. Changes in place."},
+		"description":     schema.StringAttribute{Optional: true, Description: "Optional description; null clears it."},
+		"tags":            schema.MapAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Resource tags."},
+		"engine_version":  schema.StringAttribute{Required: true, Description: "ClickHouse LTS version, 26.3 or 26.8. A newer version upgrades in place, one node at a time (one-way); an older one is refused at plan."},
+		"shards":          schema.Int64Attribute{Optional: true, Computed: true, Description: "Shards, 1 to 8 (1 when left out). More shards are added in place: existing data stays on the current shards, and rows inserted through a Distributed table spread across all shards by its sharding key. Fewer are refused at plan.", PlanModifiers: keepInt},
+		"replicas":        schema.Int64Attribute{Optional: true, Computed: true, Description: "Replicas of each shard, 1 to 3 (1 when left out). Each shard keeps serving through the loss of one node with 2 or 3 replicas. More are added in place; fewer are refused at plan.", PlanModifiers: keepInt},
+		"keeper":          schema.StringAttribute{Optional: true, Computed: true, Description: "Where Keeper runs: dedicated or colocated (3 or more nodes of at least 8 vCPUs and 32 GiB). Null for 1 shard × 1 replica; dedicated when left out on anything larger. Changes in place.", PlanModifiers: keepString},
+		"instance_type":   schema.StringAttribute{Required: true, Description: "Every node's instance type, with at least 8 GiB of memory. Changes in place, one replica of each shard at a time."},
+		"storage_kind": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("volume"), Description: "volume. Changing it replaces the warehouse.", PlanModifiers: replace,
+			Validators: []validator.String{nameValidator{"storage kind", func(s string) string {
+				if s != "volume" {
+					return "storage_kind is volume."
+				}
+				return ""
+			}}}},
 		"storage_size_gib":               schema.Int64Attribute{Required: true, Description: "Each node's storage in GiB, at least 10. Grows in place; shrinking is refused at plan."},
 		"storage_iops":                   optionalInt("Each node's provisioned storage IOPS. Set at create."),
 		"storage_throughput_mbps":        optionalInt("Each node's provisioned storage throughput in MB/s. Set at create."),
@@ -209,6 +216,15 @@ func (r *warehouseResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("keeper"), &keeper)...)
 	if keeper.IsNull() && (!plan.Shards.Equal(state.Shards) || !plan.Replicas.Equal(state.Replicas)) {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("keeper"), types.StringUnknown())...)
+	}
+	// A name still resolving keeps nothing from state: it comes with the next read.
+	if state.EndpointHostname.IsNull() {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("endpoint_hostname"), types.StringUnknown())...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("endpoint_https_port"), types.Int64Unknown())...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("endpoint_native_port"), types.Int64Unknown())...)
+	}
+	if state.AppSecretID.IsNull() {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("app_secret_id"), types.StringUnknown())...)
 	}
 	if !plan.PlaintextPort.Equal(state.PlaintextPort) {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("endpoint_plaintext_http_port"), types.Int64Unknown())...)
@@ -363,6 +379,7 @@ func (r *warehouseResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 	m.fromAPI(ctx, v, r.client.OrganizationID)
+	r.appSecret(ctx, &m)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
 	if v.Status != "creating" {
 		return
@@ -504,15 +521,22 @@ func (r *warehouseResource) refresh(ctx context.Context, m *warehouseModel, stat
 		return
 	}
 	m.fromAPI(ctx, v, r.client.OrganizationID)
-	if !known(m.AppSecretID) {
-		m.AppSecretID = types.StringNull()
-		out, err := r.client.Do(ctx, service, "GET", client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "warehouses", m.ID.ValueString(), "users", "app"), nil)
-		var u struct{ Secret *string }
-		if err == nil && out.Decode(&u) == nil {
-			m.AppSecretID = types.StringPointerValue(u.Secret)
-		}
-	}
+	r.appSecret(ctx, m)
 	diags.Append(state.Set(ctx, m)...)
+}
+
+// appSecret reads the app user's Secret ID while it isn't known (after a create, an import or a
+// wait that ended early). It stays null when the user can't be read.
+func (r *warehouseResource) appSecret(ctx context.Context, m *warehouseModel) {
+	if known(m.AppSecretID) {
+		return
+	}
+	m.AppSecretID = types.StringNull()
+	out, err := r.client.Do(ctx, service, "GET", client.ProjectPath(r.client.OrganizationID, m.ProjectID.ValueString(), "warehouses", m.ID.ValueString(), "users", "app"), nil)
+	var u struct{ Secret *string }
+	if err == nil && out.Decode(&u) == nil {
+		m.AppSecretID = types.StringPointerValue(u.Secret)
+	}
 }
 
 func (f *warehouseFields) fill(ctx context.Context, v warehouseView, org string) {

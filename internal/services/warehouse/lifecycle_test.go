@@ -289,6 +289,32 @@ func TestAccWarehouseLifecycle(t *testing.T) {
 					}
 					return nil
 				})},
+			// An import reads every attribute back, the app user's Secret included.
+			{Config: pb + config("26.8", 2, 2, 200, "light", "false"), ResourceName: "ezghcloud_warehouse.analytics", ImportState: true, ImportStateVerify: true,
+				ImportStateId: "org_test/prj_test/" + whID, ImportStateVerifyIgnore: []string{"operation_id", "operation_timeout"}},
+			{Config: pb + config("26.8", 2, 2, 200, "light", "false"), ResourceName: "ezghcloud_warehouse_user.loader", ImportState: true, ImportStateVerify: true,
+				ImportStateId: "org_test/prj_test/" + whID + "/loader"},
+			// The Keeper mode on its own, and a user's grants in place.
+			{Config: pb + strings.Replace(strings.Replace(config("26.8", 2, 2, 200, "light", "false"), `deletion_protection = false`, "deletion_protection = false\n  keeper = \"colocated\"", 1),
+				`privileges = ["SELECT", "INSERT"]`, `privileges = ["SELECT"]`, 1), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_warehouse.analytics", "keeper", "colocated"),
+				resource.TestCheckResourceAttr("ezghcloud_warehouse_user.loader", "grants.0.privileges.#", "1"),
+				func(*terraform.State) error {
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					if got := f.bodies["PATCH "+wh]; !reflect.DeepEqual(got[len(got)-1], map[string]any{"keeper": "colocated"}) {
+						return fmt.Errorf("keeper patch %v", got)
+					}
+					want := map[string]any{"permissions": map[string]any{"preset": "custom", "grants": []any{map[string]any{"database": "My_DB", "table": "a.b", "privileges": []any{"SELECT"}}}}}
+					if got := f.bodies["PATCH "+wh+"/users/loader"]; !reflect.DeepEqual(got[len(got)-1], want) {
+						return fmt.Errorf("user patches %v", got)
+					}
+					return nil
+				})},
+			{Config: pb + strings.Replace(config("26.8", 2, 2, 200, "light", "false"), `preset           = "custom"`, `preset           = "readOnly"`, 1),
+				ExpectError: regexp.MustCompile(`grants need preset custom`)},
+			{Config: pb + strings.Replace(config("26.8", 2, 2, 200, "light", "false"), `["SELECT", "INSERT"]`, `["SELECT", "SELECT"]`, 1),
+				ExpectError: regexp.MustCompile(`A privilege written twice`)},
 			{Config: pb + config("26.8", 1, 2, 200, "light", "false"), ExpectError: regexp.MustCompile(`shards can't go down`)},
 			{Config: pb + config("26.8", 2, 1, 200, "light", "false"), ExpectError: regexp.MustCompile(`replicas can't go down`)},
 			{Config: pb + config("26.3", 2, 2, 200, "light", "false"), ExpectError: regexp.MustCompile(`engine_version can't go back`)},
