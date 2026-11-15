@@ -30,7 +30,10 @@ import (
 
 var factories = map[string]func() (tfprotov6.ProviderServer, error){"ezghcloud": providerserver.NewProtocol6WithError(provider.New("test")())}
 
-const lbr = "lbr_000000000abc"
+const (
+	lbr = "lbr_000000000abc"
+	cdn = "cdn_000000000abc"
+)
 
 // fixture is waf-api and lb-api over memory. A WAF is stored with waf-api's defaults filled in, a
 // replace needs the current version's If-Match, and a WAF attached to the load balancer can't be
@@ -39,8 +42,13 @@ type fixture struct {
 	mu    sync.Mutex
 	wafs  map[string]map[string]any // by slug
 	lbWaf any                       // the load balancer's wafId: nil or a waf_ slug
-	next  int
-	calls []string // METHOD path If-Match=… of every WAF and load balancer write
+	// The distribution's waf (nil or {wafId, status, version}), its ETag version, and the bodies
+	// of its PUTs.
+	cdnWaf     map[string]any
+	cdnVersion int
+	cdnPuts    []map[string]any
+	next       int
+	calls      []string // METHOD path If-Match=… of every WAF and load balancer write
 	*httptest.Server
 }
 
@@ -110,6 +118,9 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		if f.lbWaf == obj["slug"] {
 			obj["attachments"] = []any{lbr}
 		}
+		if f.cdnWaf != nil && f.cdnWaf["wafId"] == obj["slug"] {
+			obj["attachments"] = append(obj["attachments"].([]any), cdn)
+		}
 		w.Header().Set("ETag", strconv.Quote(fmt.Sprint(obj["version"])))
 		send(status, obj)
 	}
@@ -145,6 +156,35 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 			f.lbWaf = body["wafId"]
 		}
 		send(200, map[string]any{"slug": lbr, "wafId": f.lbWaf, "waf": nil})
+	case len(parts) == 7 && parts[5] == "distributions":
+		if parts[6] != cdn {
+			fail(404, "not_found")
+			return
+		}
+		if r.Method == "PUT" {
+			if r.Header.Get("If-Match") != strconv.Quote(fmt.Sprint(f.cdnVersion)) {
+				fail(412, "precondition_failed")
+				return
+			}
+			f.cdnPuts = append(f.cdnPuts, body)
+			// Left out keeps the WAF; null detaches it.
+			if v, ok := body["waf"]; ok {
+				f.cdnWaf = nil
+				if in, ok := v.(map[string]any); ok {
+					if f.wafs[fmt.Sprint(in["wafId"])] == nil {
+						fail(400, "invalid_request")
+						return
+					}
+					f.cdnWaf = map[string]any{"wafId": in["wafId"], "status": "deploying", "version": 1}
+				}
+			}
+			f.cdnVersion++
+		}
+		w.Header().Set("ETag", strconv.Quote(fmt.Sprint(f.cdnVersion)))
+		send(200, map[string]any{"slug": cdn, "name": "web", "description": nil, "tags": map[string]any{"team": "web"}, "enabled": true,
+			"origin":  map[string]any{"host": "origin.example.com", "port": 443, "protocol": "https", "hostHeader": "viewer", "bucket": nil},
+			"domains": []any{}, "rewrites": []any{map[string]any{"pattern": "^/a$", "replacement": "/b"}},
+			"sso": map[string]any{"required": true, "applicationId": "app", "issuer": "https://login.example.com"}, "waf": f.cdnWaf})
 	case len(parts) == 6 && parts[5] == "wafs" && r.Method == "POST":
 		f.next++
 		slug := fmt.Sprintf("waf_%012d", f.next)
@@ -193,7 +233,7 @@ func (f *fixture) provider() string {
 provider "ezghcloud" {
  api_token = "fixture"
  organization_id = "org_test"
- endpoints = { orgs = %[1]q, waf = %[1]q, lb = %[1]q }
+ endpoints = { orgs = %[1]q, waf = %[1]q, lb = %[1]q, cdn = %[1]q }
 }
 `, f.URL)
 }
@@ -214,8 +254,8 @@ func (f *fixture) called(call string) resource.TestCheckFunc {
 
 func gone(f *fixture) func(*terraform.State) error {
 	return func(*terraform.State) error {
-		if len(f.wafs) != 0 || f.lbWaf != nil {
-			return fmt.Errorf("left %v, load balancer WAF %v", f.wafs, f.lbWaf)
+		if len(f.wafs) != 0 || f.lbWaf != nil || f.cdnWaf != nil {
+			return fmt.Errorf("left %v, load balancer WAF %v, distribution WAF %v", f.wafs, f.lbWaf, f.cdnWaf)
 		}
 		return nil
 	}
@@ -364,6 +404,60 @@ removed {
 	}})
 }
 
+func TestAccCDNDistributionWAF(t *testing.T) {
+	f := newFixture(t)
+	r := "ezghcloud_cdn_distribution_waf.web"
+	config := func(waf string) string {
+		return f.provider() + wafConfig("block", loginLimit) + fmt.Sprintf(`
+resource "ezghcloud_waf" "other" {
+ project_id = "prj_test"
+ name = "other"
+}
+resource "ezghcloud_cdn_distribution_waf" "web" {
+ project_id = "prj_test"
+ distribution_id = %q
+ waf_id = ezghcloud_waf.%s.id
+}
+`, cdn, waf)
+	}
+	attached := func(name string) resource.TestCheckFunc {
+		return func(s *terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if id := s.RootModule().Resources["ezghcloud_waf."+name].Primary.ID; f.cdnWaf == nil || f.cdnWaf["wafId"] != id {
+				return fmt.Errorf("distribution has WAF %v, not %s", f.cdnWaf, id)
+			}
+			// The distribution goes back as it was, sign-in and rewrites included, at the ETag read.
+			last := f.cdnPuts[len(f.cdnPuts)-1]
+			if last["sso"] == nil || last["rewrites"] == nil || last["name"] != "web" {
+				return fmt.Errorf("the replace dropped part of the distribution: %v", last)
+			}
+			return nil
+		}
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, CheckDestroy: gone(f), Steps: []resource.TestStep{
+		{Config: config("web"), Check: resource.ComposeAggregateTestCheckFunc(
+			attached("web"),
+			resource.TestCheckResourceAttr(r, "id", cdn),
+			resource.TestCheckResourceAttr(r, "status", "deploying"),
+			resource.TestCheckResourceAttrPair(r, "waf_id", "ezghcloud_waf.web", "id"))},
+		{Config: config("other"), ConfigPlanChecks: action(r, plancheck.ResourceActionUpdate), Check: attached("other")},
+		{ResourceName: r, ImportState: true, ImportStateId: "org_test/prj_test/" + cdn, ImportStateVerify: true},
+		// Detached outside Terraform: the next apply attaches it again.
+		{PreConfig: func() { f.mu.Lock(); f.cdnWaf = nil; f.mu.Unlock() }, Config: config("other"), ConfigPlanChecks: action(r, plancheck.ResourceActionCreate),
+			Check: attached("other")},
+		// Destroying detaches it with waf: null.
+		{Config: f.provider() + wafConfig("block", loginLimit), Check: func(*terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if v, ok := f.cdnPuts[len(f.cdnPuts)-1]["waf"]; !ok || v != nil || f.cdnWaf != nil {
+				return fmt.Errorf("detach sent %v; distribution WAF %v", f.cdnPuts[len(f.cdnPuts)-1], f.cdnWaf)
+			}
+			return nil
+		}},
+	}})
+}
+
 // The provider serves every WAF resource and data source, its endpoints description names waf
 // and lb, and endpoints.waf and endpoints.lb overrides are accepted.
 func TestWAFIsServed(t *testing.T) {
@@ -380,7 +474,7 @@ func TestWAFIsServed(t *testing.T) {
 		d().Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "ezghcloud"}, &resp)
 		names = append(names, resp.TypeName)
 	}
-	for _, want := range []string{"ezghcloud_waf", "ezghcloud_load_balancer_waf", "ezghcloud_waf_managed_rule_sets"} {
+	for _, want := range []string{"ezghcloud_waf", "ezghcloud_load_balancer_waf", "ezghcloud_cdn_distribution_waf", "ezghcloud_waf_managed_rule_sets"} {
 		if !slices.Contains(names, want) {
 			t.Fatalf("%s not served: %v", want, names)
 		}

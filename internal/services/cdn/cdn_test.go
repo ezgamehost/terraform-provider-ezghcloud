@@ -76,6 +76,7 @@ func TestValidateAtPlan(t *testing.T) {
 }
 
 // The body is the whole spec, every field present, so a replace resets nothing by leaving it out.
+// The body never has waf: left out, cdn-api keeps the WAF ezghcloud_cdn_distribution_waf attached.
 func TestBodyIsTheWholeSpec(t *testing.T) {
 	m := model()
 	var d diag.Diagnostics

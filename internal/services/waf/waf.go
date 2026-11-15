@@ -40,7 +40,7 @@ const service = "waf"
 var prefixedID = regexp.MustCompile(`^[a-z]+_[a-z0-9]{12}$`)
 
 func Resources() []func() resource.Resource {
-	return []func() resource.Resource{func() resource.Resource { return &wafResource{} }, func() resource.Resource { return &loadBalancerWAFResource{} }}
+	return []func() resource.Resource{func() resource.Resource { return &wafResource{} }, func() resource.Resource { return &loadBalancerWAFResource{} }, func() resource.Resource { return &cdnDistributionWAFResource{} }}
 }
 func DataSources() []func() datasource.DataSource {
 	return []func() datasource.DataSource{func() datasource.DataSource { return &managedRuleSetsDataSource{} }}
@@ -276,7 +276,7 @@ func (*wafResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *re
 				"environment": schema.StringAttribute{Optional: true, Description: "Observability environment in the WAF's project; required unless scope is off. Turning logging on needs obs.logs.ingest on the project."},
 			}},
 		"version": schema.Int64Attribute{Computed: true, Description: "Rises on every change; updates are conditional on it."},
-		"attachments": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Load balancers (lbr_) the WAF is attached to.",
+		"attachments": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Load balancers (lbr_) and CDN distributions (cdn_) the WAF is attached to.",
 			PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()}}, // an update never changes them
 	}}
 }

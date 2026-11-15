@@ -64,7 +64,7 @@ resource "ezghcloud_waf" "web" {
 
 ### Read-Only
 
-- `attachments` (List of String) Load balancers (lbr_) the WAF is attached to.
+- `attachments` (List of String) Load balancers (lbr_) and CDN distributions (cdn_) the WAF is attached to.
 - `id` (String) WAF ID (waf_).
 - `organization_id` (String) Organization managed by the configured provider.
 - `resource_name` (String) IAM resource name.
