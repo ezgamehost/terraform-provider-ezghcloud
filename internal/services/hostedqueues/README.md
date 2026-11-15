@@ -27,6 +27,9 @@ by the API; the provider never passes `force`.
 | Topic `config` | Only configured keys are read back; removing one sends `null`, the cluster's default |
 | Vhost `default_queue_type`, `max_queues`, `max_connections` | In place; a null limit is no limit |
 | Queue, exchange, binding | Any change replaces them (the API has no update) |
+| Queue `arguments` | The broker's `x-queue-type` is `type`'s: it shows in `arguments` only when configured there |
+| Object `vhost` | Kept as written: an import of `…/%2F/<name>` gives `/`, of `…/default/<name>` gives `default`; write the same spelling in config |
+| User custom `configure`, `write`, `read` | `""` stays `""` (no access) |
 | Policy `pattern`, `apply_to`, `priority`, `definition` | In place |
 | `arguments`, `definition` | JSON objects (`jsonencode`); state keeps the configured text while it means the same |
 

@@ -100,7 +100,13 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			name = "bk" + fmt.Sprint(f.ops)
 			view["name"] = name
 		case strings.HasSuffix(p, "/queues"):
-			view["type"], view["durable"] = "quorum", true
+			// The broker reports the x-queue-type every queue is declared with among its arguments.
+			args, _ := body["arguments"].(map[string]any)
+			if args == nil {
+				args = map[string]any{}
+			}
+			args["x-queue-type"] = "quorum"
+			view["type"], view["durable"], view["arguments"] = "quorum", true, args
 		}
 		if strings.Contains(p, "/vhosts/") {
 			vhost, _ := url.PathUnescape(strings.Split(strings.SplitN(p, "/vhosts/", 2)[1], "/")[0])
@@ -261,6 +267,12 @@ resource "ezghcloud_hosted_queue_user" "worker" {
   name       = "worker"
   vhosts     = [{ vhost = ezghcloud_hosted_queue_rabbitmq_vhost.app.name, preset = "readWrite" }]
 }
+resource "ezghcloud_hosted_queue_user" "reader" {
+  project_id = "prj_test"
+  cluster_id = ezghcloud_hosted_queue_cluster.mq.id
+  name       = "reader"
+  vhosts     = [{ vhost = "/", preset = "custom", configure = "", write = "", read = ".*" }]
+}
 data "ezghcloud_hosted_queue_cluster" "kafka" {
   project_id = "prj_test"
   id         = ezghcloud_hosted_queue_cluster.kafka.id
@@ -317,6 +329,8 @@ func TestAccHostedQueuesLifecycle(t *testing.T) {
 				resource.TestCheckResourceAttr("ezghcloud_hosted_queue_rabbitmq_queue.jobs", "type", "quorum"),
 				resource.TestCheckResourceAttrSet("ezghcloud_hosted_queue_rabbitmq_binding.events_ab", "key"),
 				resource.TestCheckResourceAttr("ezghcloud_hosted_queue_user.worker", "vhosts.0.vhost", "über"),
+				resource.TestCheckResourceAttr("ezghcloud_hosted_queue_user.reader", "vhosts.0.configure", ""),
+				resource.TestCheckResourceAttr("ezghcloud_hosted_queue_rabbitmq_queue.ab", "arguments", `{"x-max-length":1000}`),
 				resource.TestCheckResourceAttr("data.ezghcloud_hosted_queue_cluster.kafka", "broker_hostnames.#", "1"),
 				func(*terraform.State) error {
 					f.mu.Lock()
@@ -329,6 +343,10 @@ func TestAccHostedQueuesLifecycle(t *testing.T) {
 					}
 					return nil
 				})},
+			// An import in the default vhost keeps the spelling it was given (%2F is /).
+			{Config: providerBlock + config("single", "4.3", 3, `{ "retention.ms" = "3600000" }`, "readOnly", "60000", "false"),
+				ResourceName: "ezghcloud_hosted_queue_rabbitmq_queue.jobs", ImportState: true, ImportStateVerify: true,
+				ImportStateId: "org_test/prj_test/hqc_rrrrrrrrrrrr/%2F/jobs"},
 			{Config: providerBlock + config("replicated", "4.4", 6, "null", "readWrite", "120000", "true"), Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("ezghcloud_hosted_queue_cluster.kafka", "mode", "replicated"),
 				resource.TestCheckResourceAttr("ezghcloud_hosted_queue_cluster.kafka", "engine_version", "4.4"),

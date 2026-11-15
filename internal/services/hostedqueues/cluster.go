@@ -199,13 +199,14 @@ func (r *clusterResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 			}
 		}
 	}
-	// A replacement makes a new cluster: an older version, a single node or less storage is fine then.
-	if req.State.Raw.IsNull() || len(resp.RequiresReplace) > 0 {
+	if req.State.Raw.IsNull() {
 		return
 	}
 	var state clusterModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
+	// A replacement makes a new cluster: an older version, a single node or less storage is fine then.
+	// (The framework hands ModifyPlan no RequiresReplace paths, so it's decided here.)
+	if resp.Diagnostics.HasError() || !plan.ProjectID.Equal(state.ProjectID) || !plan.Engine.Equal(state.Engine) || !plan.SubnetID.Equal(state.SubnetID) {
 		return
 	}
 	if known(plan.EngineVersion) && compareVersions(plan.EngineVersion.ValueString(), state.EngineVersion.ValueString()) < 0 {

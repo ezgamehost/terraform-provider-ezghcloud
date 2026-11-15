@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/client"
@@ -123,13 +124,21 @@ func (r *objectResource[M, P]) id(m P) string {
 }
 
 func (r *objectResource[M, P]) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() || len(resp.RequiresReplace) > 0 {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
 		return
 	}
 	var plan, state M
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	// A replacement makes a new object, so the update checks don't apply. (The framework hands
+	// ModifyPlan no RequiresReplace paths.)
+	pv, pn := P(&plan).where()
+	sv, sn := P(&state).where()
+	pb, sb := P(&plan).base(), P(&state).base()
+	if pv != sv || pn != sn || !pb.ProjectID.Equal(sb.ProjectID) || !pb.ClusterID.Equal(sb.ClusterID) {
 		return
 	}
 	if c, ok := any(P(&plan)).(planChecker); ok {
@@ -289,7 +298,7 @@ func (r *objectResource[M, P]) ImportState(ctx context.Context, req resource.Imp
 		resp.Diagnostics.AddError("Organization mismatch", "Import organization must match the configured provider.")
 		return
 	}
-	id := parts[2:]
+	id := slices.Clone(parts[2:])
 	if r.kind.vhosted {
 		id[1] = vhostParam(id[1])
 	}

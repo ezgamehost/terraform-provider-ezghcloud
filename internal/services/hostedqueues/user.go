@@ -105,6 +105,20 @@ func (r *userResource) Configure(_ context.Context, req resource.ConfigureReques
 	configure(req.ProviderData, &resp.Diagnostics, &r.client)
 }
 
+// ModifyPlan marks secret_id unknown when the vhosts change: losing the Secret's vhost writes a new
+// password, into a new Secret when the old one is gone.
+func (r *userResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	var plan, state types.List
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("vhosts"), &plan)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("vhosts"), &state)...)
+	if !resp.Diagnostics.HasError() && !plan.Equal(state) {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("secret_id"), types.StringUnknown())...)
+	}
+}
+
 func (m *userModel) path(c *client.Client, extra ...string) string {
 	return client.ProjectPath(c.OrganizationID, m.ProjectID.ValueString(), "clusters", append([]string{m.ClusterID.ValueString(), "users", m.Name.ValueString()}, extra...)...)
 }
@@ -283,7 +297,13 @@ func (m *userModel) fill(ctx context.Context, v userView, org string) diag.Diagn
 	m.OrganizationID = types.StringValue(org)
 	p := v.Permissions
 	m.Preset = types.StringPointerValue(p.Preset)
-	m.Topics, m.Groups, m.Vhosts = types.ListNull(topicGrantType), types.ListNull(types.StringType), types.ListNull(vhostGrantType)
+	empty := func(prior types.List, null types.List) types.List {
+		if known(prior) && len(prior.Elements()) == 0 {
+			return prior // configured as [], which the API shows as none
+		}
+		return null
+	}
+	m.Topics, m.Groups, m.Vhosts = empty(m.Topics, types.ListNull(topicGrantType)), empty(m.Groups, types.ListNull(types.StringType)), types.ListNull(vhostGrantType)
 	if len(p.Topics) > 0 {
 		var list []attr.Value
 		for _, t := range p.Topics {
@@ -306,7 +326,7 @@ func (m *userModel) fill(ctx context.Context, v userView, org string) diag.Diagn
 				name = "default"
 			}
 			text := func(s string) types.String {
-				if s == "" {
+				if s == "" && g.Preset != "custom" { // "" is a custom grant's "nothing"
 					return types.StringNull()
 				}
 				return types.StringValue(s)

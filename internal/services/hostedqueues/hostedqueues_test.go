@@ -137,6 +137,13 @@ func TestClusterPlanRefusesWhatCantGoBack(t *testing.T) {
 	if resp := modifyPlan(t, r, &old, &grow); resp.Diagnostics.HasError() {
 		t.Errorf("growth: %v", resp.Diagnostics)
 	}
+	// A replacement makes a new cluster: going back to one node is fine then.
+	moved := old
+	moved.Mode, moved.SubnetID = types.StringValue("single"), types.StringValue("sbn_bbbbbbbbbbbb")
+	replicated := kafka()
+	if resp := modifyPlan(t, r, &replicated, &moved); resp.Diagnostics.HasError() {
+		t.Errorf("replacement: %v", resp.Diagnostics)
+	}
 	mq := kafka()
 	mq.Engine = types.StringValue("rabbitmq")
 	if resp := modifyPlan(t, r, nil, &mq); !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics[0].Summary(), "Kafka's") {
@@ -174,6 +181,11 @@ func TestTopicPlanRefusesFewerPartitionsOrCopies(t *testing.T) {
 		if resp := modifyPlan(t, r, &old, &next); !resp.Diagnostics.HasError() {
 			t.Error("a decrease wasn't refused")
 		}
+	}
+	renamed := old
+	renamed.Name, renamed.Partitions = types.StringValue("ingest-2"), types.Int64Value(1)
+	if resp := modifyPlan(t, r, &old, &renamed); resp.Diagnostics.HasError() {
+		t.Errorf("a replacement was checked as an update: %v", resp.Diagnostics)
 	}
 	more := old
 	more.Partitions = types.Int64Value(12)

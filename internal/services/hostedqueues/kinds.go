@@ -209,8 +209,20 @@ func (m *queueModel) createBody(context.Context) (map[string]any, diag.Diagnosti
 func (*queueModel) updateBody(context.Context, brokerObject) (map[string]any, diag.Diagnostics) {
 	return nil, nil
 }
+
+// fill reads the queue. The broker shows the x-queue-type every queue is declared with among its
+// arguments; it is the type attribute's, so arguments show it only when configured there.
 func (m *queueModel) fill(v map[string]json.RawMessage) {
-	m.Type, m.Durable, m.Arguments = rawString(v["type"]), rawBool(v["durable"]), jsonState(m.Arguments, v["arguments"])
+	args := v["arguments"]
+	var parsed, configured map[string]any
+	if json.Unmarshal(args, &parsed) == nil && parsed != nil {
+		_ = json.Unmarshal([]byte(m.Arguments.ValueString()), &configured)
+		if _, ok := configured["x-queue-type"]; !ok {
+			delete(parsed, "x-queue-type")
+			args, _ = json.Marshal(parsed)
+		}
+	}
+	m.Type, m.Durable, m.Arguments = rawString(v["type"]), rawBool(v["durable"]), jsonState(m.Arguments, args)
 }
 
 // --- RabbitMQ exchange ---
