@@ -481,6 +481,7 @@ resource "ezghcloud_warehouse_connection" "x" {
 		{"  type = \"bucket\"\n  target_id = \"hqc_kkkkkkkkkkkk\"\n  access = \"read\"\n", "target is a bkt_"},
 		{"  type = \"kafka\"\n  target_id = \"hqc_kkkkkkkkkkkk\"\n  topic_prefix = \"a/b\"\n", "Invalid topic_prefix"},
 		{"  type = \"queue\"\n  target_id = \"hqc_kkkkkkkkkkkk\"\n", "type is bucket, kafka or database"},
+		{"  type = \"database\"\n  target_id = \"dbi_dddddddddddd\"\n  database = \"\"\n", "A database name is 1 to 64 characters"},
 	} {
 		steps = append(steps, resource.TestStep{Config: conn(c.body), PlanOnly: true, ExpectError: regexp.MustCompile(regexp.QuoteMeta(c.err))})
 	}

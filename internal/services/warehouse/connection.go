@@ -73,7 +73,7 @@ func (*connectionResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 		"type":            schema.StringAttribute{Required: true, Description: "bucket, kafka or database. Changing it replaces the connection.", PlanModifiers: replace},
 		"target_id":       schema.StringAttribute{Required: true, Description: "What it reaches: a bucket (bkt_), a Kafka cluster (hqc_) or a database (dbi_). Changing it replaces the connection.", PlanModifiers: replace},
 		"access":          schema.StringAttribute{Optional: true, Description: "A bucket's access: read or readWrite (INSERT INTO FUNCTION s3(…) too). Required for a bucket, refused otherwise. Changing it replaces the connection.", PlanModifiers: replace},
-		"topic_prefix":    schema.StringAttribute{Optional: true, Description: "Kafka only: consume only topics starting with it, up to 200 of A-Z, a-z, 0-9, ., _ and -. Every topic when unset. Changing it replaces the connection.", PlanModifiers: replace},
+		"topic_prefix":    schema.StringAttribute{Optional: true, Description: "Kafka only: consume only topics starting with it, up to 200 of A-Z, a-z, 0-9, ., _ and -, in consumer groups whose names start with the username in secret_id. Every topic when unset. Changing it replaces the connection.", PlanModifiers: replace},
 		"database":        schema.StringAttribute{Optional: true, Description: "A database connection's logical database. Required for a database, refused otherwise. Changing it replaces the connection.", PlanModifiers: replace},
 		"secret_id":       schema.StringAttribute{Computed: true, Description: "The Secret (sec_) holding a Kafka or database connection's user and password; null for a bucket.", PlanModifiers: keepString},
 		"status":          schema.StringAttribute{Computed: true, Description: "creating, available, broken (its target is gone), deleting or failed."},
@@ -118,6 +118,9 @@ func (r *connectionResource) ValidateConfig(ctx context.Context, req resource.Va
 	if known(m.Access) && m.Access.ValueString() != "read" && m.Access.ValueString() != "readWrite" {
 		resp.Diagnostics.AddAttributeError(path.Root("access"), "Invalid access", "access is read or readWrite.")
 	}
+	if known(m.Database) && (m.Database.ValueString() == "" || len(m.Database.ValueString()) > 64) {
+		resp.Diagnostics.AddAttributeError(path.Root("database"), "Invalid database", "A database name is 1 to 64 characters.")
+	}
 	if known(m.TopicPrefix) && !topicPrefix.MatchString(m.TopicPrefix.ValueString()) {
 		resp.Diagnostics.AddAttributeError(path.Root("topic_prefix"), "Invalid topic_prefix", "Up to 200 of A-Z, a-z, 0-9, ., _ and -.")
 	}
@@ -150,7 +153,6 @@ func (r *connectionResource) Create(ctx context.Context, req resource.CreateRequ
 	v, err := readConnection(ctx, r.client, &m)
 	if err != nil {
 		resp.Diagnostics.AddWarning("Couldn't read "+m.Name.ValueString(), "It was created, but reading it back failed: "+err.Error()+". The next refresh reads it.")
-		m.Status = types.StringValue("available")
 		resp.Diagnostics.Append(setKnown(ctx, &resp.State, &m)...)
 		return
 	}
