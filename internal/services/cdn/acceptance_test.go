@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,10 @@ type fixture struct {
 	versions map[string]int
 	next     int
 	calls    []string // METHOD If-Match=… of every write
+	// stale makes the next PUTs that many 412s, each as if another write landed just before it
+	// (ezghcloud_cdn_distribution_waf's, which only moves waf), applying change if set.
+	stale  int
+	change func(map[string]any)
 	*httptest.Server
 }
 
@@ -85,6 +90,13 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		etag(slug)
 		reply(200, f.items[slug])
 	case r.Method == "PUT":
+		if f.stale > 0 {
+			f.stale--
+			f.versions[slug]++
+			if f.change != nil {
+				f.change(f.items[slug])
+			}
+		}
 		if r.Header.Get("If-Match") != strconv.Quote(strconv.Itoa(f.versions[slug])) {
 			reply(412, map[string]any{"error": map[string]any{"code": "precondition_failed", "message": "The distribution changed since it was read"}})
 			return
@@ -165,6 +177,29 @@ func TestAccCDNDistributionLifecycle(t *testing.T) {
 				})},
 			{ResourceName: "ezghcloud_cdn_distribution.web", ImportState: true, ImportStateId: "org/prj/cdn_000000000001", ImportStateVerify: true},
 		}})
+}
+
+// A WAF attached or detached between refresh and the update (ezghcloud_cdn_distribution_waf's
+// replace bumps the ETag) is read again and the update retried once; a change to what this
+// resource manages still stops it.
+func TestAccCDNDistributionETagMovedByWAF(t *testing.T) {
+	f := newFixture(t)
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: []resource.TestStep{
+		{Config: config(f, true, "")},
+		{PreConfig: func() { f.mu.Lock(); f.stale = 1; f.mu.Unlock() }, Config: config(f, false, ""), Check: resource.ComposeAggregateTestCheckFunc(
+			resource.TestCheckResourceAttr("ezghcloud_cdn_distribution.web", "enabled", "false"),
+			func(*terraform.State) error {
+				if got := f.calls[len(f.calls)-2:]; got[0] != `PUT If-Match="1"` || got[1] != `PUT If-Match="2"` {
+					return fmt.Errorf("writes %v", got)
+				}
+				return nil
+			})},
+		{PreConfig: func() {
+			f.mu.Lock()
+			f.stale, f.change = 1, func(d map[string]any) { d["name"] = "renamed" }
+			f.mu.Unlock()
+		}, Config: config(f, true, ""), ExpectError: regexp.MustCompile(`Distribution changed since refresh`)},
+	}})
 }
 
 // An origin or domain list built from other resources is unknown at plan: validation waits for it.

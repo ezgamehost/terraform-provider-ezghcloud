@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -299,11 +300,29 @@ func (r *distributionResource) Update(ctx context.Context, req resource.UpdateRe
 	if len(etag) > 0 {
 		headers = http.Header{"If-Match": {string(etag)}}
 	}
-	out, err := r.client.DoWithHeaders(ctx, service, "PUT", distributionPath(r.client, m.ProjectID.ValueString(), m.ID.ValueString()), body, headers)
+	at := distributionPath(r.client, m.ProjectID.ValueString(), m.ID.ValueString())
+	out, err := r.client.DoWithHeaders(ctx, service, "PUT", at, body, headers)
 	var e *client.Error
 	if errors.As(err, &e) && e.StatusCode == 412 {
-		resp.Diagnostics.AddError("Distribution changed since refresh", m.ID.ValueString()+" was changed outside this plan. Refresh and plan again.")
-		return
+		// Attaching or detaching a WAF (ezghcloud_cdn_distribution_waf) moves the ETag without
+		// touching what this resource manages: read it again and retry once when that's so.
+		var prior distributionModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+		cur, rerr := r.client.Do(ctx, service, "GET", at, nil)
+		var v view
+		if rerr == nil {
+			rerr = cur.Decode(&v)
+		}
+		now := prior
+		if rerr == nil {
+			now.fromAPI(ctx, v, r.client.OrganizationID)
+		}
+		var ignored diag.Diagnostics
+		if rerr != nil || resp.Diagnostics.HasError() || !reflect.DeepEqual(now.body(ctx, &ignored), prior.body(ctx, &ignored)) {
+			resp.Diagnostics.AddError("Distribution changed since refresh", m.ID.ValueString()+" was changed outside this plan. Refresh and plan again.")
+			return
+		}
+		out, err = r.client.DoWithHeaders(ctx, service, "PUT", at, body, http.Header{"If-Match": {cur.Header.Get("ETag")}})
 	}
 	r.save(ctx, &m, out, err, &resp.State, resp.Private, &resp.Diagnostics)
 }
