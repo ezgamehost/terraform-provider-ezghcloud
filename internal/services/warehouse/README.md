@@ -1,6 +1,6 @@
 # Warehouse lifecycle
 
-The schemas were checked against warehouse-stack's OpenAPI at `17e0a56` (every route) on 2026-11-15.
+The schemas were checked against warehouse-stack's OpenAPI at `8eb8791` (every route) on 2026-11-15.
 Served only with `EZGHCLOUD_PREVIEW_WAREHOUSE=1` until Warehouse launches (Gate 4). Terraform IDs are
 the slug (`whs_`); a user's and a database's are `<whs_>/<name>`.
 
