@@ -284,7 +284,6 @@ data "ezghcloud_hosted_queue_cluster" "kafka" {
 // every kind, grows Kafka to replicated and upgrades it, changes objects in place, and destroys it
 // all. Every call names its own object; the apps' objects are never read, changed or deleted.
 func TestAccHostedQueuesLifecycle(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_HOSTED_QUEUES", "1")
 	f := newFake()
 	s := httptest.NewServer(f)
 	t.Cleanup(s.Close)

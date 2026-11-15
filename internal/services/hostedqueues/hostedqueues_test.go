@@ -35,13 +35,6 @@ func replaces(t *testing.T, s schema.Schema, name string) bool {
 	return false
 }
 
-func TestHiddenUntilLaunch(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_HOSTED_QUEUES", "")
-	if len(Resources()) != 0 || len(DataSources()) != 0 {
-		t.Error("served without the preview variable")
-	}
-}
-
 func TestSchemasReplaceOnlyWhatMoves(t *testing.T) {
 	s := schemaOf(&clusterResource{})
 	for _, name := range []string{"engine", "subnet_id", "project_id"} {

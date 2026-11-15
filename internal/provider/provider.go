@@ -44,7 +44,7 @@ func (p *cloudProvider) Metadata(_ context.Context, _ framework.MetadataRequest,
 }
 
 func (p *cloudProvider) Schema(_ context.Context, _ framework.SchemaRequest, resp *framework.SchemaResponse) {
-	services := "orgs, compute, network, firewall, blockstore, images, databases, caches, files, dns, certificates, kubernetes, lb, waf, cdn"
+	services := "orgs, compute, network, firewall, blockstore, images, databases, caches, files, dns, certificates, kubernetes, lb, waf, cdn, hostedqueues"
 	resp.Schema = schema.Schema{Description: "Manage EZGH Cloud infrastructure and IAM through its public APIs.", Attributes: map[string]schema.Attribute{
 		"api_token":       schema.StringAttribute{Optional: true, Sensitive: true, Description: "Customer bearer credential. Defaults to EZGHCLOUD_API_TOKEN. The credential is never stored as a resource attribute."},
 		"organization_id": schema.StringAttribute{Optional: true, Description: "Organization identifier. Defaults to EZGHCLOUD_ORGANIZATION_ID. Use provider aliases for multiple organizations."},

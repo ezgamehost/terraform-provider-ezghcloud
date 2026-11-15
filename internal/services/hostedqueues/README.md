@@ -1,7 +1,6 @@
 # Hosted Queues lifecycle
 
-Served only with `EZGHCLOUD_PREVIEW_HOSTED_QUEUES=1` until Hosted Queues launch (Gate 4), so releases
-and their generated docs leave it out. The schemas were checked against hosted-queues-stack's
+The schemas were checked against hosted-queues-stack's
 `openapi.overlay.json` at `cd0b7bb` on 2026-11-14. Terraform IDs are the slug (`hqc_`); a user's is
 `<hqc_>/<name>`, a topic's or vhost's `<hqc_>/<name>`, and a RabbitMQ object's `<hqc_>/<vhost>/<name>`
 (`default` for `/`; a binding's name is its server-assigned key).
@@ -35,5 +34,6 @@ by the API; the provider never passes `force`.
 
 Not managed: `raise-replication` (a one-off action), consumer groups (apps make them), queue purges.
 
-At Gate 4: drop `Preview`, add `hostedqueues` to the provider's endpoints description, add examples,
-run `make docs`, and run `TestLiveHostedQueuesLifecycle` (Gates 2/3) with `TF_ACC=1 EZGH_PROFILE=dev`.
+`TestLiveHostedQueuesLifecycle` runs against real EZGH only with `TF_ACC=1 EZGH_PROFILE=dev`, plus
+`EZGHCLOUD_API_TOKEN`, `EZGHCLOUD_ORGANIZATION_ID`, `EZGHCLOUD_TEST_PROJECT_ID` and
+`EZGHCLOUD_TEST_SUBNET_ID`.

@@ -21,7 +21,6 @@ func TestLiveHostedQueuesLifecycle(t *testing.T) {
 	if os.Getenv("TF_ACC") != "1" || os.Getenv("EZGH_PROFILE") != "dev" {
 		t.Skip("set TF_ACC=1 and EZGH_PROFILE=dev to run against real EZGH")
 	}
-	t.Setenv("EZGHCLOUD_PREVIEW_HOSTED_QUEUES", "1")
 	env := map[string]string{}
 	for _, k := range []string{"EZGHCLOUD_API_TOKEN", "EZGHCLOUD_ORGANIZATION_ID", "EZGHCLOUD_TEST_PROJECT_ID", "EZGHCLOUD_TEST_SUBNET_ID"} {
 		if env[k] = os.Getenv(k); env[k] == "" {
@@ -41,7 +40,7 @@ resource "ezghcloud_hosted_queue_cluster" "kafka" {
   engine_version   = %[4]q
   mode             = %[3]q
   raise_app_topics = true
-  instance_type    = "gp-1.small"
+  instance_type    = "gp-1.large"
   storage_size_gib = 20
   subnet_id        = %[2]q
 }
@@ -62,7 +61,7 @@ resource "ezghcloud_hosted_queue_cluster" "mq" {
   name             = "tf-live-rabbitmq"
   engine           = "rabbitmq"
   engine_version   = "4.3"
-  instance_type    = "gp-1.small"
+  instance_type    = "gp-1.large"
   storage_size_gib = 20
   subnet_id        = %[2]q
 }

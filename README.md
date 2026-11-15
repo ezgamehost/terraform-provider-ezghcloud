@@ -42,7 +42,8 @@ Set `TF_CLI_CONFIG_FILE` to that file. With a development override, run `terrafo
 validate`, `plan`, and `apply` directly; `terraform init` still tries to install a
 published provider. See [provider configuration](docs/index.md),
 [infrastructure examples](examples/compute), [network examples](examples/network),
-[database examples](examples/databases) and [IAM examples](examples/iam).
+[database examples](examples/databases), [Hosted Queues examples](examples/hosted-queues)
+and [IAM examples](examples/iam).
 
 ```sh
 export EZGHCLOUD_API_TOKEN='your-bearer-credential'
