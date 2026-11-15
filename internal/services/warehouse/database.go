@@ -73,22 +73,31 @@ func (r *databaseResource) Create(ctx context.Context, req resource.CreateReques
 	}
 }
 
-// Read checks the warehouse is still there.
-// shortcut: warehouse-api has no GET of one database until C4; then read it, and drop the resource
-// when the database is gone.
+// Read reads the database: one dropped outside Terraform (or being deleted) leaves the state, so the
+// next apply creates it again.
 func (r *databaseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var m databaseModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &m)...)
 	if resp.Diagnostics.HasError() || !validateOrg(m.OrganizationID, r.client, &resp.Diagnostics) {
 		return
 	}
-	if _, err := readWarehouse(ctx, r.client, m.ProjectID.ValueString(), m.WarehouseID.ValueString()); err != nil {
+	out, err := r.client.Do(ctx, service, "GET", m.collection(r.client, m.Name.ValueString()), nil)
+	if err != nil {
 		missing, e := confirmedMissing(ctx, r.client, m.ProjectID.ValueString(), err)
 		if missing {
 			resp.State.RemoveResource(ctx)
 			return
 		}
 		apiError(&resp.Diagnostics, e)
+		return
+	}
+	var v struct{ Status string }
+	if err := out.Decode(&v); err != nil {
+		apiError(&resp.Diagnostics, err)
+		return
+	}
+	if v.Status == "deleting" {
+		resp.State.RemoveResource(ctx)
 	}
 }
 

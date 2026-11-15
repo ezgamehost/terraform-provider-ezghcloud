@@ -1,6 +1,6 @@
 # Warehouse lifecycle
 
-The schemas were checked against warehouse-stack's `openapi.overlay.json` at `b07d749` on 2026-11-15.
+The schemas were checked against warehouse-stack's OpenAPI at `a691d04` (C1 and C4) on 2026-11-15.
 Served only with `EZGHCLOUD_PREVIEW_WAREHOUSE=1` until Warehouse launches (Gate 4). Terraform IDs are
 the slug (`whs_`); a user's and a database's are `<whs_>/<name>`.
 
@@ -24,10 +24,12 @@ error naming `terraform import`, never adopted.
 | User `secret_id` | The Secret holding the password and connection details. No attribute holds the password, and none is sensitive |
 | User `app` | Comes with the warehouse; import it to manage it |
 | Database every attribute | Replaces it. Names are exact and refused at plan as the API refuses them |
+| Database read | `GET` of that database; one dropped outside Terraform leaves the state and is created again |
+| Connection every configured attribute | Replaces it (there is no update route). Each type's fields are refused at plan on another type |
+| Connection `secret_id` | The Kafka or database user's Secret; null for a bucket |
+| Connection `status` | `broken` when its target is gone: it stays in state until destroyed |
 
-Not yet: `ezghcloud_warehouse_connection` and the `ezghcloud_warehouse_databases` data source wait for
-warehouse-api's connections and schema inventory (C4); a database's `Read` checks only its warehouse
-until the API can read one database.
+Not yet: an `ezghcloud_warehouse_databases` data source over the schema inventory.
 
 `TestLiveWarehouseLifecycle` runs against real EZGH only with `TF_ACC=1 EZGH_PROFILE=dev`, plus
 `EZGHCLOUD_API_TOKEN`, `EZGHCLOUD_ORGANIZATION_ID`, `EZGHCLOUD_TEST_PROJECT_ID` and

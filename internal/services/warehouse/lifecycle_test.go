@@ -90,6 +90,21 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.objects[p+"/"+name] = map[string]any{"name": name, "status": "available", "secret": "sec_" + name, "failure": nil, "permissions": perms, "settingsProfile": profile}
 		f.accepted(w, p)
+	case r.Method == "POST" && strings.HasSuffix(p, "/connections"):
+		name, _ := body["name"].(string)
+		for k, o := range f.objects {
+			if strings.HasPrefix(k, p+"/") && body["type"] == "bucket" && o["target"] == body["target"] {
+				refuse(w, 409, "already_exists", "The warehouse already has a connection to this bucket")
+				return
+			}
+		}
+		var secret any
+		if body["type"] != "bucket" {
+			secret = "sec_" + name
+		}
+		f.objects[p+"/"+name] = map[string]any{"warehouse": whID, "name": name, "type": body["type"], "target": body["target"], "access": body["access"], "topicPrefix": body["topicPrefix"],
+			"database": body["database"], "secret": secret, "status": "available", "failure": nil, "createdAt": "2026-11-15T09:00:00.000Z"}
+		f.accepted(w, p)
 	case r.Method == "POST" && strings.HasSuffix(p, "/databases"):
 		name, _ := body["name"].(string)
 		if f.objects[p+"/"+name] != nil {
@@ -235,7 +250,12 @@ func TestAccWarehouseLifecycle(t *testing.T) {
 			defer f.mu.Unlock()
 			var databaseCalls []string
 			for _, req := range f.requests {
-				if strings.Contains(req, "/databases") {
+				switch {
+				case !strings.Contains(req, "/databases"):
+				case req == "GET "+wh+"/databases/My_DB": // the database resource reading its own
+				case strings.HasPrefix(req, "GET "):
+					return fmt.Errorf("read a database it doesn't manage: %s", req)
+				default:
 					databaseCalls = append(databaseCalls, req)
 				}
 			}
@@ -347,4 +367,122 @@ resource "ezghcloud_warehouse_database" "events" {
 			{Config: pb + config("26.8", 1, 1, 100, "default", "true"), Destroy: true, ExpectError: regexp.MustCompile(`(?s)Turn deletion protection off to delete a\s+database`)},
 			{Config: pb + config("26.8", 1, 1, 100, "default", "false")},
 		}})
+}
+
+func connectionsConfig(extra string) string {
+	return config("26.8", 1, 1, 100, "default", "false") + `
+resource "ezghcloud_warehouse_connection" "lake" {
+  project_id   = "prj_test"
+  warehouse_id = ezghcloud_warehouse.analytics.id
+  name         = "lake"
+  type         = "bucket"
+  target_id    = "bkt_bbbbbbbbbbbb"
+  access       = "read"
+}
+resource "ezghcloud_warehouse_connection" "clicks" {
+  project_id   = "prj_test"
+  warehouse_id = ezghcloud_warehouse.analytics.id
+  name         = "clicks"
+  type         = "kafka"
+  target_id    = "hqc_kkkkkkkkkkkk"
+  topic_prefix = "clicks."
+}
+` + extra
+}
+
+// Connections send each type's fields alone; a second connection to the same bucket shows the API's
+// refusal; a broken one stays in state; a database dropped outside Terraform is created again.
+func TestAccWarehouseConnections(t *testing.T) {
+	f, pb := start(t)
+	wh := prefix + "/" + whID
+	second := `
+resource "ezghcloud_warehouse_connection" "lake2" {
+  project_id   = "prj_test"
+  warehouse_id = ezghcloud_warehouse.analytics.id
+  name         = "lake2"
+  type         = "bucket"
+  target_id    = "bkt_bbbbbbbbbbbb"
+  access       = "readWrite"
+}
+`
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories,
+		CheckDestroy: func(*terraform.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.objects[wh+"/connections/lake"] != nil || f.objects[wh+"/connections/clicks"] != nil {
+				return fmt.Errorf("a connection is still there")
+			}
+			return nil
+		},
+		Steps: []resource.TestStep{
+			{Config: pb + connectionsConfig(""), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_warehouse_connection.lake", "id", whID+"/lake"),
+				resource.TestCheckNoResourceAttr("ezghcloud_warehouse_connection.lake", "secret_id"),
+				resource.TestCheckResourceAttr("ezghcloud_warehouse_connection.clicks", "secret_id", "sec_clicks"),
+				resource.TestCheckResourceAttr("ezghcloud_warehouse_connection.clicks", "status", "available"),
+				func(*terraform.State) error {
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					want := []map[string]any{
+						{"name": "lake", "type": "bucket", "target": "bkt_bbbbbbbbbbbb", "access": "read"},
+						{"name": "clicks", "type": "kafka", "target": "hqc_kkkkkkkkkkkk", "topicPrefix": "clicks."},
+					}
+					got := f.bodies["POST "+wh+"/connections"]
+					if len(got) != 2 || !(reflect.DeepEqual(got, want) || reflect.DeepEqual(got, []map[string]any{want[1], want[0]})) {
+						return fmt.Errorf("connection create bodies %v", got)
+					}
+					return nil
+				})},
+			{Config: pb + connectionsConfig(""), ResourceName: "ezghcloud_warehouse_connection.clicks", ImportState: true, ImportStateVerify: true,
+				ImportStateId: "org_test/prj_test/" + whID + "/clicks"},
+			{Config: pb + connectionsConfig(second), ExpectError: regexp.MustCompile(`already has a connection to this bucket`)},
+			// The bucket went away: the connection is broken, still in state, and nothing is replaced.
+			{PreConfig: func() {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				o := f.objects[wh+"/connections/lake"]
+				o["status"], o["failure"] = "broken", map[string]any{"code": "target_gone", "message": "The connection's target is gone"}
+			}, Config: pb + connectionsConfig(""), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("ezghcloud_warehouse_connection.lake", "status", "broken"),
+				resource.TestCheckResourceAttr("ezghcloud_warehouse_connection.lake", "failure_code", "target_gone"),
+			)},
+			// My_DB dropped outside Terraform: the next apply creates it again.
+			{PreConfig: func() {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				delete(f.objects, wh+"/databases/My_DB")
+			}, Config: pb + connectionsConfig(""), Check: func(*terraform.State) error {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if n := len(f.bodies["POST "+wh+"/databases"]); n != 2 || f.objects[wh+"/databases/My_DB"] == nil {
+					return fmt.Errorf("My_DB wasn't created again (%d creates)", n)
+				}
+				return nil
+			}},
+		}})
+}
+
+// Each type's fields, refused at plan on another type, as the API refuses them.
+func TestConnectionConfigRefusedAtPlan(t *testing.T) {
+	_, pb := start(t)
+	conn := func(body string) string {
+		return pb + config("26.8", 1, 1, 100, "default", "false") + `
+resource "ezghcloud_warehouse_connection" "x" {
+  project_id   = "prj_test"
+  warehouse_id = ezghcloud_warehouse.analytics.id
+  name         = "x"
+` + body + "}\n"
+	}
+	steps := []resource.TestStep{}
+	for _, c := range []struct{ body, err string }{
+		{"  type = \"bucket\"\n  target_id = \"bkt_bbbbbbbbbbbb\"\n", "A bucket connection needs access"},
+		{"  type = \"kafka\"\n  target_id = \"hqc_kkkkkkkkkkkk\"\n  access = \"read\"\n", "access isn't for a kafka connection"},
+		{"  type = \"database\"\n  target_id = \"dbi_dddddddddddd\"\n", "A database connection needs database"},
+		{"  type = \"bucket\"\n  target_id = \"hqc_kkkkkkkkkkkk\"\n  access = \"read\"\n", "target is a bkt_"},
+		{"  type = \"kafka\"\n  target_id = \"hqc_kkkkkkkkkkkk\"\n  topic_prefix = \"a/b\"\n", "Invalid topic_prefix"},
+		{"  type = \"queue\"\n  target_id = \"hqc_kkkkkkkkkkkk\"\n", "type is bucket, kafka or database"},
+	} {
+		steps = append(steps, resource.TestStep{Config: conn(c.body), PlanOnly: true, ExpectError: regexp.MustCompile(regexp.QuoteMeta(c.err))})
+	}
+	resource.Test(t, resource.TestCase{ProtoV6ProviderFactories: factories, Steps: steps})
 }

@@ -39,7 +39,7 @@ func TestPreviewServesWarehouseOnlyWithTheVariable(t *testing.T) {
 		t.Fatal("served without EZGHCLOUD_PREVIEW_WAREHOUSE=1")
 	}
 	t.Setenv("EZGHCLOUD_PREVIEW_WAREHOUSE", "1")
-	if len(Resources()) != 3 || len(DataSources()) != 1 {
+	if len(Resources()) != 4 || len(DataSources()) != 1 {
 		t.Fatal("not served with EZGHCLOUD_PREVIEW_WAREHOUSE=1")
 	}
 }
@@ -73,10 +73,17 @@ func TestSchemasReplaceOnlyWhatMoves(t *testing.T) {
 			t.Errorf("database %s doesn't force replacement", name)
 		}
 	}
+	// No update route: everything configured replaces a connection.
+	c := schemaOf(&connectionResource{})
+	for _, name := range []string{"project_id", "warehouse_id", "name", "type", "target_id", "access", "topic_prefix", "database"} {
+		if !replaces(t, c, name) {
+			t.Errorf("connection %s doesn't force replacement", name)
+		}
+	}
 }
 
 func TestUserWritesNoPasswordToState(t *testing.T) {
-	for _, s := range []schema.Schema{schemaOf(&userResource{}), schemaOf(&warehouseResource{})} {
+	for _, s := range []schema.Schema{schemaOf(&userResource{}), schemaOf(&warehouseResource{}), schemaOf(&connectionResource{})} {
 		for name, a := range s.Attributes {
 			if strings.Contains(name, "password") {
 				t.Errorf("%s holds a password", name)

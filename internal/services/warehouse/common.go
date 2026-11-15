@@ -42,6 +42,7 @@ func Resources() []func() resource.Resource {
 		func() resource.Resource { return &warehouseResource{} },
 		func() resource.Resource { return &userResource{} },
 		func() resource.Resource { return &databaseResource{} },
+		func() resource.Resource { return &connectionResource{} },
 	}
 }
 func DataSources() []func() datasource.DataSource {
