@@ -21,6 +21,7 @@ import (
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/kubernetes"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/network"
 	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/waf"
+	"github.com/ezgamehost/terraform-provider-ezghcloud/internal/services/warehouse"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	framework "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -103,6 +104,7 @@ func (p *cloudProvider) Resources(context.Context) []func() resource.Resource {
 	out = append(out, databases.Resources()...)
 	out = append(out, caches.Resources()...)
 	out = append(out, hostedqueues.Resources()...)
+	out = append(out, warehouse.Resources()...)
 	out = append(out, files.Resources()...)
 	out = append(out, dns.Resources()...)
 	out = append(out, certificates.Resources()...)
@@ -118,6 +120,7 @@ func (p *cloudProvider) DataSources(context.Context) []func() datasource.DataSou
 	out = append(out, databases.DataSources()...)
 	out = append(out, caches.DataSources()...)
 	out = append(out, hostedqueues.DataSources()...)
+	out = append(out, warehouse.DataSources()...)
 	out = append(out, files.DataSources()...)
 	out = append(out, dns.DataSources()...)
 	out = append(out, waf.DataSources()...)
