@@ -405,6 +405,7 @@ removed {
 }
 
 func TestAccCDNDistributionWAF(t *testing.T) {
+	t.Setenv("EZGHCLOUD_PREVIEW_CDN_WAF", "1")
 	f := newFixture(t)
 	r := "ezghcloud_cdn_distribution_waf.web"
 	config := func(waf string) string {
@@ -461,6 +462,7 @@ resource "ezghcloud_cdn_distribution_waf" "web" {
 // The provider serves every WAF resource and data source, its endpoints description names waf
 // and lb, and endpoints.waf and endpoints.lb overrides are accepted.
 func TestWAFIsServed(t *testing.T) {
+	t.Setenv("EZGHCLOUD_PREVIEW_CDN_WAF", "1")
 	ctx := context.Background()
 	p := provider.New("test")()
 	var names []string
