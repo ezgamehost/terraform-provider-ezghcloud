@@ -148,7 +148,7 @@ func (*warehouseResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		"backup_window_utc":              schema.StringAttribute{Optional: true, Computed: true, Description: "When the daily backup is taken, HH:MM-HH:MM UTC. Changes in place.", PlanModifiers: keepString},
 		"maintenance_window_utc":         schema.StringAttribute{Optional: true, Computed: true, Description: "Weekly maintenance window, ddd:HH:MM-ddd:HH:MM UTC. Changes in place.", PlanModifiers: keepString},
 		"deletion_protection":            schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "While true, neither the warehouse nor its databases can be destroyed."},
-		"from_backup":                    schema.StringAttribute{Optional: true, Description: "Restore this backup into the new warehouse, <warehouse ID>/<backup ID>; shards must equal the backup's. Changing it replaces the warehouse.", PlanModifiers: replace},
+		"from_backup":                    schema.StringAttribute{Optional: true, Description: "Restore this backup into the new warehouse, <warehouse ID>/<backup ID> (a backup's ID is a UUID); shards must equal the backup's, and it needs warehouse.warehouses.query on the backup's warehouse. Its users come across with new passwords in new Secrets (import them to manage them); connections don't. Changing it replaces the warehouse.", PlanModifiers: replace},
 		"endpoint_hostname":              computed("The name clients connect to; null until it resolves. It stays the same through scaling and upgrades."),
 		"endpoint_https_port":            computedInt("The HTTPS port, 8443."),
 		"endpoint_native_port":           computedInt("The native protocol's TLS port, 9440."),
