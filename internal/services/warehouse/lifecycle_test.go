@@ -228,7 +228,6 @@ func providerBlock(url string) string {
 
 func start(t *testing.T) (*fakeAPI, string) {
 	t.Helper()
-	t.Setenv("EZGHCLOUD_PREVIEW_WAREHOUSE", "1")
 	t.Setenv("EZGHCLOUD_API_TOKEN", "t")
 	t.Setenv("EZGHCLOUD_ORGANIZATION_ID", "org_test")
 	f := newFake()

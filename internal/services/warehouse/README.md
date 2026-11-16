@@ -1,8 +1,7 @@
 # Warehouse lifecycle
 
 The schemas were checked against warehouse-stack's OpenAPI at `8eb8791` (every route) on 2026-11-15.
-Served only with `EZGHCLOUD_PREVIEW_WAREHOUSE=1` until Warehouse launches (Gate 4). Terraform IDs are
-the slug (`whs_`); a user's and a database's are `<whs_>/<name>`.
+Terraform IDs are the slug (`whs_`); a user's, a database's and a connection's are `<whs_>/<name>`.
 
 **Terraform never drops a database it didn't declare.** The warehouse resource never calls a
 database route, and reads only its own fields and the `app` user's Secret ID. Only destroying an

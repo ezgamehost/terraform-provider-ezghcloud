@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -29,15 +28,7 @@ const service = "warehouse"
 
 var prefixedID = regexp.MustCompile(`^[a-z]+_[a-z0-9]{12}$`)
 
-// Preview is whether Warehouse resources are served: only with EZGHCLOUD_PREVIEW_WAREHOUSE=1 (the
-// tests set it) until Warehouse launches, so releases and their Registry docs leave them out. At
-// launch, drop it, add the service to the provider's endpoints description and run make docs.
-func Preview() bool { return os.Getenv("EZGHCLOUD_PREVIEW_WAREHOUSE") == "1" }
-
 func Resources() []func() resource.Resource {
-	if !Preview() {
-		return nil
-	}
 	return []func() resource.Resource{
 		func() resource.Resource { return &warehouseResource{} },
 		func() resource.Resource { return &userResource{} },
@@ -46,9 +37,6 @@ func Resources() []func() resource.Resource {
 	}
 }
 func DataSources() []func() datasource.DataSource {
-	if !Preview() {
-		return nil
-	}
 	return []func() datasource.DataSource{func() datasource.DataSource { return &lookup{} }}
 }
 

@@ -33,17 +33,6 @@ func replaces(t *testing.T, s schema.Schema, name string) bool {
 	return false
 }
 
-func TestPreviewServesWarehouseOnlyWithTheVariable(t *testing.T) {
-	t.Setenv("EZGHCLOUD_PREVIEW_WAREHOUSE", "")
-	if len(Resources()) != 0 || len(DataSources()) != 0 {
-		t.Fatal("served without EZGHCLOUD_PREVIEW_WAREHOUSE=1")
-	}
-	t.Setenv("EZGHCLOUD_PREVIEW_WAREHOUSE", "1")
-	if len(Resources()) != 4 || len(DataSources()) != 1 {
-		t.Fatal("not served with EZGHCLOUD_PREVIEW_WAREHOUSE=1")
-	}
-}
-
 func TestSchemasReplaceOnlyWhatMoves(t *testing.T) {
 	w := schemaOf(&warehouseResource{})
 	for _, name := range []string{"project_id", "subnet_id", "storage_kind", "from_backup"} {
